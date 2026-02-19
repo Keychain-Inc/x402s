@@ -1,0 +1,44 @@
+{
+  "name": "x402s",
+  "version": "1.0.0",
+  "description": "x402 State Channel Hub Protocol — contracts, hub, agent, payee, and tooling",
+  "main": "node/scp-hub/server.js",
+  "scripts": {
+    "compile": "npx hardhat compile",
+    "test": "npx hardhat test test/test_x402_state_channel.js",
+    "test:deep": "npx mocha test/test_scp_stack_deep.js --timeout 30000",
+    "test:all": "npx hardhat test && npx mocha test/test_scp_stack_deep.js --timeout 30000",
+    "hub": "node node/scp-hub/server.js",
+    "hub:selftest": "node node/scp-hub/http-selftest.js",
+    "payee": "node node/scp-demo/payee-server.js",
+    "agent": "node node/scp-agent/demo-agent.js",
+    "agent:pay": "node node/scp-agent/pay-url.js",
+    "channel:open": "node node/scp-agent/channel-cli.js open",
+    "channel:fund": "node node/scp-agent/channel-cli.js fund",
+    "channel:close": "node node/scp-agent/channel-cli.js close",
+    "channel:list": "node node/scp-agent/channel-cli.js list",
+    "agent:payments": "node node/scp-agent/show-payments.js",
+    "demo:e2e": "node node/scp-demo/demo-e2e.js",
+    "demo:direct": "node node/scp-demo/demo-direct.js",
+    "sim": "node node/scp-sim/sim-multi-node.js",
+    "sim:mixed": "node node/scp-sim/sim-mixed.js",
+    "watch:agent": "ROLE=agent node node/scp-watch/challenge-watcher.js",
+    "watch:hub": "ROLE=hub node node/scp-watch/challenge-watcher.js",
+    "deploy:sepolia": "npx hardhat run scripts/deploy.js --network sepolia"
+  },
+  "keywords": ["x402", "state-channel", "evm", "payments", "http-402"],
+  "license": "MIT",
+  "devDependencies": {
+    "@nomiclabs/hardhat-ethers": "^2.0.1",
+    "@nomiclabs/hardhat-waffle": "^2.0.1",
+    "chai": "^4.2.0",
+    "ethereum-waffle": "^3.2.1",
+    "hardhat": "^2.0.8",
+    "mocha": "^10.2.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^3.4.0",
+    "ajv": "^6.12.6",
+    "ethers": "^5.0.26"
+  }
+}
