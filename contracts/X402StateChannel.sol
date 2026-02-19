@@ -24,6 +24,8 @@ contract X402StateChannel is IX402StateChannel {
     }
 
     mapping(bytes32 => Channel) private _channels;
+    bytes32[] private _channelIds;
+    mapping(address => bytes32[]) private _channelsByParticipant;
 
     function openChannel(
         address participantB,
@@ -60,6 +62,10 @@ contract X402StateChannel is IX402StateChannel {
             closeBalA: 0,
             closeBalB: 0
         });
+
+        _channelIds.push(channelId);
+        _channelsByParticipant[msg.sender].push(channelId);
+        _channelsByParticipant[participantB].push(channelId);
 
         if (amount > 0) {
             _collectAsset(asset, msg.sender, amount);
@@ -224,6 +230,35 @@ contract X402StateChannel is IX402StateChannel {
             closeDeadline: ch.closeDeadline,
             latestNonce: ch.latestNonce
         });
+    }
+
+    function getChannelCount() external view override returns (uint256) {
+        return _channelIds.length;
+    }
+
+    function getChannelIds(uint256 offset, uint256 limit)
+        external
+        view
+        override
+        returns (bytes32[] memory ids)
+    {
+        uint256 len = _channelIds.length;
+        if (offset >= len) return new bytes32[](0);
+        uint256 end = offset + limit;
+        if (end > len) end = len;
+        ids = new bytes32[](end - offset);
+        for (uint256 i = offset; i < end; i++) {
+            ids[i - offset] = _channelIds[i];
+        }
+    }
+
+    function getChannelsByParticipant(address participant)
+        external
+        view
+        override
+        returns (bytes32[] memory)
+    {
+        return _channelsByParticipant[participant];
     }
 
     function hashState(ChannelState calldata st) public pure override returns (bytes32) {

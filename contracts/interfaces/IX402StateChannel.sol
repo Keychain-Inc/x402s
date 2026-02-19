@@ -95,5 +95,17 @@ interface IX402StateChannel {
         view
         returns (ChannelParams memory params);
 
+    function getChannelCount() external view returns (uint256);
+
+    function getChannelIds(uint256 offset, uint256 limit)
+        external
+        view
+        returns (bytes32[] memory ids);
+
+    function getChannelsByParticipant(address participant)
+        external
+        view
+        returns (bytes32[] memory);
+
     function hashState(ChannelState calldata st) external pure returns (bytes32);
 }

@@ -51,6 +51,23 @@ Payment flow: `Agent → 402 → Hub quote → sign state → Hub issue ticket �
 | `npm run demo:direct` | Direct peer-to-peer payment test |
 | `npm run hub:selftest` | Hub HTTP self-test |
 
+### Watch
+
+| Command | What it does |
+|---------|-------------|
+| `npm run watch:agent` | Watch channel as agent — auto-challenge if counterparty closes with stale nonce |
+| `npm run watch:hub` | Watch channel as hub |
+
+Requires: `RPC_URL`, `CONTRACT_ADDRESS`, `CHANNEL_ID`, `WATCHER_PRIVATE_KEY`. Optional: `POLL_MS` (default 5000), `SAFETY_BUFFER_SEC` (default 2).
+
+### On-chain Queries
+
+The contract supports enumeration:
+- `getChannelCount()` → total channels ever opened
+- `getChannelIds(offset, limit)` → paginated channel ID list
+- `getChannelsByParticipant(address)` → all channel IDs for an address
+- `getChannel(channelId)` → single channel details
+
 ### Infrastructure
 
 | Command | What it does |
@@ -72,7 +89,9 @@ Payment flow: `Agent → 402 → Hub quote → sign state → Hub issue ticket �
 9. **sim** → `npm run sim` with optional `SIM_AGENTS=10 SIM_PAYEES=5 SIM_ROUNDS=5`
 10. **hub** / **start** → start hub and/or payee servers in background
 11. **state** → read `node/scp-agent/state/agent-state.json`
-12. If unclear → `npm run demo:e2e`
+12. **watch \<channelId\>** → `ROLE=agent RPC_URL=<rpc> CONTRACT_ADDRESS=<addr> CHANNEL_ID=<id> WATCHER_PRIVATE_KEY=<key> npm run watch:agent` (use `ROLE=hub` + `npm run watch:hub` for hub side)
+13. **channels for \<address\>** → call `getChannelsByParticipant(address)` on-chain to discover all channels for an address, then `getChannel(id)` for each
+14. If unclear → `npm run demo:e2e`
 
 For on-chain operations (open/fund/close), `RPC_URL` and `CONTRACT_ADDRESS` env vars are required. Default Sepolia contract: `0x6F858C7120290431B606bBa343E3A8737B3dfCB4`.
 
