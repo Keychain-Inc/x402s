@@ -408,19 +408,18 @@ The watcher reads local proof material (agent state or hub store) and submits `c
 
 ---
 
-## Claude Code Agent Skill
+## Agent Skill
 
-A `/agent` slash command is included for Claude Code. It lets you operate the SCP stack from the IDE:
+An [agentskills.io](https://agentskills.io)-compatible skill is included at [`skill/SKILL.md`](skill/SKILL.md). Any compatible agent can discover and use it to operate the SCP stack — pay URLs, manage channels, run tests.
+
+For Claude Code, a `/agent` slash command wraps the same skill:
 
 ```
 /agent pay for the weather API
-/agent show payment history
-/agent run the e2e demo
-/agent simulate 10 agents paying 5 payees
+/agent open channel with 0xAbc... 1000000
 /agent run all tests
+/agent show balance
 ```
-
-The skill file is at `.claude/commands/agent.md`.
 
 ---
 
@@ -458,6 +457,8 @@ x402s/
 │       ├── server.js                 # Weather API with 402 paywall
 │       ├── demo.js                   # Local weather payment demo
 │       └── demo-sepolia.js           # Sepolia on-chain demo
+├── skill/
+│   └── SKILL.md                      # agentskills.io-format agent skill
 ├── docs/
 │   ├── X402_STATE_CHANNEL_V1.md      # Protocol spec (v1.2)
 │   ├── IMPLEMENTATION_X402_SCP_V1.md # Implementation guide
