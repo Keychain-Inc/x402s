@@ -1,26 +1,34 @@
 /* eslint-disable no-console */
 const { ScpAgentClient } = require("./agent-client");
-const { resolveAsset, parseAmount } = require("../scp-common/networks");
+const { resolveNetwork, resolveAsset, parseAmount } = require("../scp-common/networks");
 
 const target = process.argv[2];
 const args = process.argv.slice(3);
 
 if (!target) {
   console.error(`Usage:
-  agent:pay <url> [hub|direct]                          Pay a 402-protected URL
-  agent:pay <0xAddr> <asset> <amount> [hubUrl]          Pay an address (friendly)
-  agent:pay <0xAddr> <rawAmount> [hubUrl]               Pay an address (raw)
+  agent:pay <url> [hub|direct]                                Pay a 402-protected URL
+  agent:pay <0xAddr> <network> <asset> <amount> [hubUrl]      Pay an address (full)
+  agent:pay <0xAddr> <asset> <amount> [hubUrl]                Pay an address (default: base)
+  agent:pay <0xAddr> <rawAmount> [hubUrl]                     Pay an address (raw)
 
 Examples:
-  agent:pay https://api.example/v1/data                 # pay URL via hub
-  agent:pay https://api.example/v1/data direct          # pay URL directly
-  agent:pay 0xPayee usdc 5                              # pay 5 USDC via hub
-  agent:pay 0xPayee usdc 5 http://hub:4021              # pay via specific hub
-  agent:pay 0xPayee 5000000                             # pay raw amount via hub`);
+  agent:pay https://api.example/v1/data                       # pay URL via hub
+  agent:pay https://api.example/v1/data direct                # pay URL directly
+  agent:pay 0xPayee base usdc 5                               # 5 USDC on Base
+  agent:pay 0xPayee mainnet usdc 10                           # 10 USDC on Ethereum
+  agent:pay 0xPayee usdc 5                                    # 5 USDC (default: base)
+  agent:pay 0xPayee 5000000                                   # raw amount
+  agent:pay 0xPayee base usdc 5 http://hub:4021               # specify hub`);
   process.exit(1);
 }
 
 const isAddress = /^0x[a-fA-F0-9]{40}$/.test(target);
+
+// Check if a string is a known network name
+function isNetworkName(s) {
+  try { resolveNetwork(s); return true; } catch (_) { return false; }
+}
 
 async function main() {
   const opts = {
@@ -33,32 +41,40 @@ async function main() {
 
   try {
     if (isAddress) {
-      const arg1 = args[0];
-      const arg2 = args[1];
-      const arg3 = args[2];
-
-      if (!arg1) {
-        console.error("Usage: agent:pay <0xAddr> <asset> <amount> [hubUrl]");
+      if (!args[0]) {
+        console.error("Usage: agent:pay <0xAddr> [network] <asset> <amount> [hubUrl]");
         console.error("   or: agent:pay <0xAddr> <rawAmount> [hubUrl]");
         process.exit(1);
       }
 
-      let amount, hubEndpoint, label;
-      if (/^\d+$/.test(arg1)) {
+      let amount, hubEndpoint, label, chainId;
+
+      if (/^\d+$/.test(args[0])) {
         // Raw: agent:pay 0xAddr 5000000 [hubUrl]
-        amount = arg1;
-        hubEndpoint = arg2 || process.env.HUB_URL || "http://127.0.0.1:4021";
+        amount = args[0];
+        hubEndpoint = args[1] || process.env.HUB_URL || "http://127.0.0.1:4021";
         label = amount;
+      } else if (isNetworkName(args[0])) {
+        // Full: agent:pay 0xAddr base usdc 5 [hubUrl]
+        const network = resolveNetwork(args[0]);
+        if (!args[1] || !args[2]) {
+          console.error("Usage: agent:pay <0xAddr> <network> <asset> <amount> [hubUrl]");
+          process.exit(1);
+        }
+        const asset = resolveAsset(network.chainId, args[1]);
+        amount = parseAmount(args[2], asset.decimals);
+        hubEndpoint = args[3] || process.env.HUB_URL || "http://127.0.0.1:4021";
+        label = `${args[2]} ${asset.symbol} on ${network.name} (${amount} raw)`;
       } else {
-        // Friendly: agent:pay 0xAddr usdc 5 [hubUrl]
-        if (!arg2) {
+        // Short: agent:pay 0xAddr usdc 5 [hubUrl] — default base
+        if (!args[1]) {
           console.error("Usage: agent:pay <0xAddr> <asset> <amount> [hubUrl]");
           process.exit(1);
         }
-        const asset = resolveAsset(8453, arg1);
-        amount = parseAmount(arg2, asset.decimals);
-        hubEndpoint = arg3 || process.env.HUB_URL || "http://127.0.0.1:4021";
-        label = `${arg2} ${asset.symbol} (${amount} raw)`;
+        const asset = resolveAsset(8453, args[0]);
+        amount = parseAmount(args[1], asset.decimals);
+        hubEndpoint = args[2] || process.env.HUB_URL || "http://127.0.0.1:4021";
+        label = `${args[1]} ${asset.symbol} (${amount} raw)`;
       }
 
       console.log(`Paying ${target} ${label} via ${hubEndpoint}...`);

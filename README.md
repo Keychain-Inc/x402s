@@ -58,7 +58,8 @@ npm run channel:open -- 0xHubAddress mainnet usdc 100   # 100 USDC on Ethereum
 
 # 4. Pay things
 npm run agent:pay -- https://api.example/v1/data
-npm run agent:pay -- 0xPayeeAddress usdc 5            # 5 USDC
+npm run agent:pay -- 0xPayeeAddress base usdc 5       # 5 USDC on Base
+npm run agent:pay -- 0xPayeeAddress usdc 5            # 5 USDC (default: base)
 npm run agent:pay -- 0xPayeeAddress 5000000           # or raw
 ```
 

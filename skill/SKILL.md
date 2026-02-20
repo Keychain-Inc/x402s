@@ -28,7 +28,8 @@ Payment flow: `Agent → 402 → Hub quote → sign state → Hub issue ticket �
 | Command | What it does |
 |---------|-------------|
 | `npm run agent:pay -- <url> [hub\|direct]` | Pay a 402-protected URL |
-| `npm run agent:pay -- <0xAddr> <asset> <amount> [hubUrl]` | Pay an address (friendly) |
+| `npm run agent:pay -- <0xAddr> <network> <asset> <amount> [hubUrl]` | Pay an address (with network) |
+| `npm run agent:pay -- <0xAddr> <asset> <amount> [hubUrl]` | Pay an address (default: base) |
 | `npm run agent:pay -- <0xAddr> <rawAmount> [hubUrl]` | Pay an address (raw) |
 | `npm run agent:payments` | Show payment history |
 | `npm run agent` | Run demo payment (auto-starts hub + payee) |
