@@ -57,6 +57,7 @@ class ScpAgentClient {
     this.assetAllowlist = (options.assetAllowlist || []).map((x) => x.toLowerCase());
     this.maxFeeDefault = options.maxFeeDefault || "5000";
     this.maxAmountDefault = options.maxAmountDefault || "5000000";
+    this.devMode = options.devMode !== undefined ? options.devMode : !options.privateKey;
     this.persistEnabled = options.persistEnabled !== false;
     this.http = new HttpJsonClient({
       timeoutMs: options.timeoutMs || 8000,
@@ -87,14 +88,19 @@ class ScpAgentClient {
 
   channelForKey(channelKey) {
     if (!this.state.channels[channelKey]) {
-      this.state.channels[channelKey] = {
-        channelId:
-          "0x" + crypto.createHash("sha256").update(`${channelKey}:${this.wallet.address}`).digest("hex"),
-        nonce: 0,
-        balA: "100000000000",
-        balB: "0"
-      };
-      this.persist();
+      if (this.devMode) {
+        this.state.channels[channelKey] = {
+          channelId:
+            "0x" + crypto.createHash("sha256").update(`${channelKey}:${this.wallet.address}`).digest("hex"),
+          nonce: 0,
+          balA: "100000000000",
+          balB: "0",
+          virtual: true
+        };
+        this.persist();
+      } else {
+        return null;
+      }
     }
     return this.state.channels[channelKey];
   }
@@ -107,12 +113,54 @@ class ScpAgentClient {
     return this.channelForKey(`direct:${payeeAddress.toLowerCase()}`);
   }
 
+  async queryHubInfo(hubEndpoint) {
+    const res = await this.http.request("GET", `${hubEndpoint}/.well-known/x402`);
+    if (res.statusCode !== 200) return null;
+    return res.body;
+  }
+
+  computeFee(amount, feePolicy) {
+    const base = BigInt(feePolicy.base || "0");
+    const bps = BigInt(feePolicy.bps || 0);
+    const gas = BigInt(feePolicy.gasSurcharge || "0");
+    return base + (BigInt(amount) * bps / 10000n) + gas;
+  }
+
+  formatSetupHint(hubInfo, amount) {
+    const fee = this.computeFee(amount, hubInfo.feePolicy);
+    const perPayment = BigInt(amount) + fee;
+    const for100 = perPayment * 100n;
+    const for1000 = perPayment * 1000n;
+    const lines = [
+      `No channel open with hub ${hubInfo.hubName || hubInfo.address}.`,
+      ``,
+      `Hub:     ${hubInfo.address}`,
+      `Fee:     base=${hubInfo.feePolicy.base} + ${hubInfo.feePolicy.bps}bps + gas=${hubInfo.feePolicy.gasSurcharge}`,
+      `Assets:  ${(hubInfo.supportedAssets || []).join(", ")}`,
+      ``,
+      `Per payment: ${amount} + ${fee} fee = ${perPayment}`,
+      `  100 payments ≈ ${for100}`,
+      `  1000 payments ≈ ${for1000}`,
+      ``,
+      `Open a channel:`,
+      `  RPC_URL=https://mainnet.base.org \\`,
+      `  CONTRACT_ADDRESS=<addr> \\`,
+      `  npm run channel:open -- ${hubInfo.address} <deposit>`
+    ];
+    return lines.join("\n");
+  }
+
   nextChannelState(channelKey, totalDebit, contextHash) {
     const ch = this.channelForKey(channelKey);
     const debit = BigInt(totalDebit);
     const balA = BigInt(ch.balA);
     const balB = BigInt(ch.balB);
-    if (debit > balA) throw new Error("insufficient local channel balance");
+    if (debit > balA) {
+      throw new Error(
+        `Insufficient channel balance: need ${debit} but have ${balA}. ` +
+        `Top up with: npm run channel:fund -- ${ch.channelId} <amount>`
+      );
+    }
 
     ch.nonce += 1;
     ch.balA = (balA - debit).toString();
@@ -165,6 +213,15 @@ class ScpAgentClient {
     const maxAmount = options.maxAmount || this.maxAmountDefault;
     if (BigInt(amount) > BigInt(maxAmount)) {
       throw new Error(`amount exceeds maxAmount policy (${amount} > ${maxAmount})`);
+    }
+
+    const ch = this.channelForHub(hubEndpoint);
+    if (!ch) {
+      const hubInfo = await this.queryHubInfo(hubEndpoint).catch(() => null);
+      if (hubInfo) {
+        throw new Error(this.formatSetupHint(hubInfo, amount));
+      }
+      throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run channel:open -- <hubAddress> <deposit>`);
     }
 
     const contextHash = this.buildContextHash({
@@ -266,6 +323,14 @@ class ScpAgentClient {
       throw new Error(`amount exceeds maxAmount policy (${amount} > ${maxAmount})`);
     }
 
+    const ch = this.channelForDirect(ext.payeeAddress);
+    if (!ch) {
+      throw new Error(
+        `No direct channel open with ${ext.payeeAddress}.\n` +
+        `Open one with: npm run channel:open -- ${ext.payeeAddress} <deposit>`
+      );
+    }
+
     const contextHash = this.buildContextHash({
       payee: ext.payeeAddress,
       resource: offer.resource || resourceUrl,
@@ -327,6 +392,15 @@ class ScpAgentClient {
     const invoiceId = options.invoiceId || randomId("inv");
     const paymentId = options.paymentId || randomId("pay");
     const maxFee = options.maxFee || this.maxFeeDefault;
+
+    const ch = this.channelForHub(hubEndpoint);
+    if (!ch) {
+      const hubInfo = await this.queryHubInfo(hubEndpoint).catch(() => null);
+      if (hubInfo) {
+        throw new Error(this.formatSetupHint(hubInfo, amount));
+      }
+      throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run channel:open -- <hubAddress> <deposit>`);
+    }
 
     const contextHash = this.buildContextHash({
       payee: payeeAddress,

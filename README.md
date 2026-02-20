@@ -42,6 +42,17 @@ npm run demo:e2e
 
 This spins up a hub + payee in-process, runs a full `A -> H -> B` payment, and prints the result.
 
+## Networks & Assets
+
+| Network | Chain ID | RPC | ETH | USDC | USDT |
+|---------|----------|-----|-----|------|------|
+| **Ethereum** | `eip155:1` | `https://eth.llamarpc.com` | native | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` | `0xdAC17F958D2ee523a2206206994597C13D831ec7` |
+| **Base** | `eip155:8453` | `https://mainnet.base.org` | native | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2` |
+| **Sepolia** | `eip155:11155111` | `https://rpc.sepolia.org` | native | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` | — |
+| **Base Sepolia** | `eip155:84532` | `https://sepolia.base.org` | native | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | — |
+
+Contract: `0x6F858C7120290431B606bBa343E3A8737B3dfCB4` (Sepolia)
+
 ## Setting Up an Agent
 
 ```bash
@@ -56,8 +67,8 @@ curl -s https://hub-url/.well-known/x402 | jq '{hub: .hubAddress, fee: .feePolic
 # → { "hub": "0xHubAddr...", "fee": { "base": "10", "bps": 30, "gasSurcharge": "0" } }
 
 # 4. Open a channel with the hub and deposit USDC
-#    Use the hub address from step 3, deposit enough for your expected usage (see "How Much to Fund")
-RPC_URL=https://sepolia.infura.io/v3/KEY \
+#    Use the hub address from step 3 (see "How Much to Fund" below)
+RPC_URL=https://mainnet.base.org \
 CONTRACT_ADDRESS=0x6F858C7120290431B606bBa343E3A8737B3dfCB4 \
 npm run channel:open -- 0xHubAddress 10000000
 
@@ -70,28 +81,22 @@ For local testing, skip steps 2-4 — the dev key and off-chain hub work out of 
 
 ## How Much to Fund
 
-There are two channels in a hub-routed payment:
+Two channels in a hub-routed payment:
 
 ```
-Agent ──deposit──► [Agent↔Hub channel] ──fee stays──► Hub ──payment──► [Hub↔Payee channel] ──► Payee
+Agent ──deposit──► [Agent↔Hub] ──fee──► Hub ──payment──► [Hub↔Payee] ──► Payee
 ```
 
-**Agent funds Agent↔Hub channel.** Each payment debits `price + hub fee` from your balance.
-but
-**Hub funds Hub↔Payee channel.** The hub pre-deposits and shifts balance to the payee per payment. Payees don't deposit anything.
+Agent funds Agent↔Hub. Hub funds Hub↔Payee. Payees don't deposit.
 
-With defaults (USDC, fee base=10, bps=30):
+| Per request | Hub fee | You pay | 100 reqs | 1000 reqs |
+|-------------|---------|---------|----------|-----------|
+| $0.01 | 13 | 10,013 | ~$1 | ~$10 |
+| $0.10 | 310 | 100,310 | ~$10 | ~$100 |
+| $0.50 | 1,510 | 501,510 | ~$50 | ~$502 |
+| $1.00 | 3,010 | 1,003,010 | ~$100 | ~$1,003 |
 
-| Price per request | Hub fee | Agent pays | Fund for 100 | Fund for 1000 |
-|-------------------|---------|------------|-------------|--------------|
-| $0.01 (10,000) | 13 | 10,013 | ~$1.00 | ~$10.01 |
-| $0.10 (100,000) | 310 | 100,310 | ~$10.03 | ~$100.31 |
-| $0.50 (500,000) | 1,510 | 501,510 | ~$50.15 | ~$501.51 |
-| $1.00 (1,000,000) | 3,010 | 1,003,010 | ~$100.30 | ~$1,003.01 |
-
-**Formula:** `deposit = expected_payments * (price + fee)`
-
-Deposit more anytime with `channel:fund`. The hub keeps fee revenue; the payee gets the full price on settlement.
+`deposit = payments * (price + fee)` — top up anytime with `channel:fund`.
 
 ## Run the Stack
 
@@ -396,7 +401,7 @@ contextHash   bytes32   binds to payee + resource + invoice
 
 Deploy your own:
 ```bash
-RPC_URL=https://sepolia.infura.io/v3/KEY \
+RPC_URL=https://rpc.sepolia.org \
 DEPLOYER_KEY=0x... \
 npm run deploy:sepolia
 ```
@@ -410,7 +415,7 @@ Monitors on-chain close events and auto-submits the highest known state if the c
 ```bash
 # Watch as agent
 ROLE=agent \
-RPC_URL=https://sepolia.infura.io/v3/KEY \
+RPC_URL=https://rpc.sepolia.org \
 CONTRACT_ADDRESS=0x6F858C7120290431B606bBa343E3A8737B3dfCB4 \
 CHANNEL_ID=0x... \
 WATCHER_PRIVATE_KEY=0x... \
