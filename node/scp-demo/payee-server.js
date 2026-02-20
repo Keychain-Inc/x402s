@@ -201,24 +201,18 @@ async function handle(req, res, ctx) {
   const { cfg, payeeAddress, invoiceStore, consumed } = ctx;
   const u = new URL(req.url, `http://${req.headers.host || `${cfg.host}:${cfg.port}`}`);
 
-  if (req.method === "GET" && u.pathname === "/pay") {
-    const invoiceId = randomId("inv");
-    invoiceStore.set(invoiceId, { createdAt: now(), amount: cfg.price });
-    return sendJson(res, 200, make402(invoiceId, cfg, payeeAddress));
-  }
+  const isPay = req.method === "GET" && u.pathname === "/pay";
+  const isResource = req.method === "GET" && u.pathname === cfg.resourcePath;
 
-  if (req.method !== "GET" || u.pathname !== cfg.resourcePath) {
+  if (!isPay && !isResource) {
     return sendJson(res, 404, { error: "not found" });
   }
 
   const paymentPayload = parsePaymentHeader(req);
   if (!paymentPayload) {
     const invoiceId = randomId("inv");
-    invoiceStore.set(invoiceId, {
-      createdAt: now(),
-      amount: cfg.price
-    });
-    return sendJson(res, 402, make402(invoiceId, cfg, payeeAddress));
+    invoiceStore.set(invoiceId, { createdAt: now(), amount: cfg.price });
+    return sendJson(res, isPay ? 200 : 402, make402(invoiceId, cfg, payeeAddress));
   }
 
   if (consumed.has(paymentPayload.paymentId)) {

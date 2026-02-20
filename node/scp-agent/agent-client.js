@@ -180,8 +180,13 @@ class ScpAgentClient {
   }
 
   async discoverOffers(resourceUrl) {
-    const res = await this.http.request("GET", resourceUrl);
-    if (res.statusCode !== 402) throw new Error(`expected 402, got ${res.statusCode}`);
+    const base = resourceUrl.replace(/\/[^/]*$/, "");
+    const payUrl = `${base}/pay`;
+    let res = await this.http.request("GET", payUrl);
+    if (res.statusCode !== 200 || !res.body.accepts) {
+      res = await this.http.request("GET", resourceUrl);
+      if (res.statusCode !== 402) throw new Error(`expected 402, got ${res.statusCode}`);
+    }
     return (res.body.accepts || []).filter((offer) => {
       if (!this.networkAllowlist.includes(offer.network)) return false;
       if (this.assetAllowlist.length > 0 && !this.assetAllowlist.includes(offer.asset.toLowerCase())) {
@@ -282,7 +287,8 @@ class ScpAgentClient {
       }
     };
 
-    const paid = await this.http.request("GET", resourceUrl, null, {
+    const targetUrl = offer.resource || resourceUrl;
+    const paid = await this.http.request("GET", targetUrl, null, {
       "PAYMENT-SIGNATURE": JSON.stringify(paymentPayload)
     });
     if (paid.statusCode !== 200) {
@@ -291,7 +297,7 @@ class ScpAgentClient {
 
     this.state.payments[paymentId] = {
       paidAt: now(),
-      resourceUrl,
+      resourceUrl: targetUrl,
       invoiceId,
       ticketId: issuedTicket.ticketId,
       route: "hub",
@@ -366,7 +372,8 @@ class ScpAgentClient {
       }
     };
 
-    const paid = await this.http.request("GET", resourceUrl, null, {
+    const targetUrl = offer.resource || resourceUrl;
+    const paid = await this.http.request("GET", targetUrl, null, {
       "PAYMENT-SIGNATURE": JSON.stringify(paymentPayload)
     });
     if (paid.statusCode !== 200) {
@@ -375,7 +382,7 @@ class ScpAgentClient {
 
     this.state.payments[paymentId] = {
       paidAt: now(),
-      resourceUrl,
+      resourceUrl: targetUrl,
       invoiceId,
       route: "direct",
       receipt: paid.body.receipt

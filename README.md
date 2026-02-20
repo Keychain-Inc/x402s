@@ -116,7 +116,7 @@ npm run scp:agent
 
 | Command | |
 |---------|---|
-| `scp:agent:pay -- <url> [hub\|direct]` | Pay a 402-protected URL |
+| `scp:agent:pay -- <url> [hub\|direct]` | Pay a URL (discovers offers via /pay or 402) |
 | `scp:agent:pay -- <channelId> <amount>` | Pay through an open channel |
 | `scp:agent:payments` | Show payment history |
 
@@ -171,17 +171,15 @@ No hub. Agent signs state directly for payee. Lower fees, but requires a channel
 
 ### Agent-to-Agent Payments
 
-Two agents can pay each other through a shared channel — no hub, no payee server:
+Two agents can pay each other through hub or direct channels:
 
 ```bash
-# Agent A opens a channel with Agent B
-npm run scp:channel:open -- 0xAgentB base usdc 50
+# Via hub — both agents have channels with the same hub
+npm run scp:agent:pay -- http://agent-b.example/pay hub
 
-# Agent A pays Agent B through the channel
+# Via direct — agents open a channel between each other
+npm run scp:channel:open -- 0xAgentB base usdc 50 direct
 npm run scp:agent:pay -- 0xChannelId... 1000000
-
-# Agent B sees the payment in their state
-npm run scp:agent:payments
 ```
 
 Both sides run the challenge watcher to stay safe. Either side can close the channel on-chain at any time.
