@@ -58,7 +58,8 @@ npm run channel:open -- 0xHubAddress mainnet usdc 100   # 100 USDC on Ethereum
 
 # 4. Pay things
 npm run agent:pay -- https://api.example/v1/data
-npm run agent:pay -- 0xPayeeAddress 1000000
+npm run agent:pay -- 0xPayeeAddress usdc 5            # 5 USDC
+npm run agent:pay -- 0xPayeeAddress 5000000           # or raw
 ```
 
 Networks: `mainnet`, `base`, `sepolia`, `base-sepolia`. Assets: `eth`, `usdc`, `usdt`. RPCs and token addresses resolve automatically. You can also pass raw values: `npm run channel:open -- 0xAddr https://rpc.example 0xTokenAddr 20000000`.

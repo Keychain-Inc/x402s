@@ -28,7 +28,8 @@ Payment flow: `Agent → 402 → Hub quote → sign state → Hub issue ticket �
 | Command | What it does |
 |---------|-------------|
 | `npm run agent:pay -- <url> [hub\|direct]` | Pay a 402-protected URL |
-| `npm run agent:pay -- <0xAddr> <amount> [hubUrl]` | Pay an address via hub |
+| `npm run agent:pay -- <0xAddr> <asset> <amount> [hubUrl]` | Pay an address (friendly) |
+| `npm run agent:pay -- <0xAddr> <rawAmount> [hubUrl]` | Pay an address (raw) |
 | `npm run agent:payments` | Show payment history |
 | `npm run agent` | Run demo payment (auto-starts hub + payee) |
 
@@ -81,7 +82,7 @@ The contract supports enumeration:
 ## Routing rules
 
 1. **pay \<url\>** → `npm run agent:pay -- <url>` (add `direct` for direct route)
-2. **pay \<address\> \<amount\>** → `npm run agent:pay -- <0xAddress> <amount> [hubUrl]`
+2. **pay \<address\> \<asset\> \<amount\>** → `npm run agent:pay -- <0xAddress> <asset> <amount> [hubUrl]` (e.g. `usdc 5`)
 3. **pay** (no args) → start hub + payee in background, then `npm run agent:pay -- http://127.0.0.1:4042/v1/data`
 4. **open \<address\> \<network\> \<asset\> \<amount\>** → `npm run channel:open -- <0xAddress> <network> <asset> <amount>` (e.g. `base usdc 20`)
 5. **fund \<channelId\> \<amount\>** → `npm run channel:fund -- <channelId> <amount>`
