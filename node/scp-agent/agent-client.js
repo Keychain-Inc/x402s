@@ -143,9 +143,7 @@ class ScpAgentClient {
       `  1000 payments ≈ ${for1000}`,
       ``,
       `Open a channel:`,
-      `  RPC_URL=https://mainnet.base.org \\`,
-      `  CONTRACT_ADDRESS=<addr> \\`,
-      `  npm run channel:open -- ${hubInfo.address} <deposit>`
+      `  npm run channel:open -- ${hubInfo.address} base usdc <amount>`
     ];
     return lines.join("\n");
   }

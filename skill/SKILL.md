@@ -36,10 +36,12 @@ Payment flow: `Agent → 402 → Hub quote → sign state → Hub issue ticket �
 
 | Command | What it does |
 |---------|-------------|
-| `npm run channel:open -- <0xAddr> [amount]` | Open channel on-chain with deposit |
+| `npm run channel:open -- <0xAddr> <network> <asset> <amount>` | Open channel with deposit |
 | `npm run channel:fund -- <channelId> <amount>` | Deposit into existing channel |
 | `npm run channel:close -- <channelId>` | Close channel (cooperative or unilateral) |
 | `npm run channel:list` | List all channels + balances |
+
+Networks: `mainnet`, `base`, `sepolia`, `base-sepolia`. Assets: `eth`, `usdc`, `usdt`. RPCs and token addresses resolve automatically.
 
 ### Verify & Test
 
@@ -81,9 +83,9 @@ The contract supports enumeration:
 1. **pay \<url\>** → `npm run agent:pay -- <url>` (add `direct` for direct route)
 2. **pay \<address\> \<amount\>** → `npm run agent:pay -- <0xAddress> <amount> [hubUrl]`
 3. **pay** (no args) → start hub + payee in background, then `npm run agent:pay -- http://127.0.0.1:4042/v1/data`
-4. **open \<address\> [amount]** → `RPC_URL=<rpc> CONTRACT_ADDRESS=<addr> npm run channel:open -- <0xAddress> <amount>`
-5. **fund \<channelId\> \<amount\>** → `RPC_URL=<rpc> CONTRACT_ADDRESS=<addr> npm run channel:fund -- <channelId> <amount>`
-6. **close \<channelId\>** → `RPC_URL=<rpc> CONTRACT_ADDRESS=<addr> npm run channel:close -- <channelId>`
+4. **open \<address\> \<network\> \<asset\> \<amount\>** → `npm run channel:open -- <0xAddress> <network> <asset> <amount>` (e.g. `base usdc 20`)
+5. **fund \<channelId\> \<amount\>** → `npm run channel:fund -- <channelId> <amount>`
+6. **close \<channelId\>** → `npm run channel:close -- <channelId>`
 7. **balance** / **list** → `npm run channel:list` then `npm run agent:payments`
 8. **verify** / **test** → `npm run test:deep` (fast) or `npm run test:all` (full)
 9. **sim** → `npm run sim` with optional `SIM_AGENTS=10 SIM_PAYEES=5 SIM_ROUNDS=5`
@@ -93,6 +95,6 @@ The contract supports enumeration:
 13. **channels for \<address\>** → call `getChannelsByParticipant(address)` on-chain to discover all channels for an address, then `getChannel(id)` for each
 14. If unclear → `npm run demo:e2e`
 
-For on-chain operations (open/fund/close), `RPC_URL` and `CONTRACT_ADDRESS` env vars are required. Default Sepolia contract: `0x6F858C7120290431B606bBa343E3A8737B3dfCB4`.
+Channel CLI resolves RPCs and token addresses automatically from network/asset names. You can also override with `RPC_URL` and `CONTRACT_ADDRESS` env vars. Default Sepolia contract: `0x6F858C7120290431B606bBa343E3A8737B3dfCB4`.
 
 After running commands, summarize concisely: what happened, amounts, any errors.

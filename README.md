@@ -42,17 +42,6 @@ npm run demo:e2e
 
 This spins up a hub + payee in-process, runs a full `A -> H -> B` payment, and prints the result.
 
-## Networks & Assets
-
-| Network | Chain ID | RPC | ETH | USDC | USDT |
-|---------|----------|-----|-----|------|------|
-| **Ethereum** | `eip155:1` | `https://eth.llamarpc.com` | native | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` | `0xdAC17F958D2ee523a2206206994597C13D831ec7` |
-| **Base** | `eip155:8453` | `https://mainnet.base.org` | native | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2` |
-| **Sepolia** | `eip155:11155111` | `https://rpc.sepolia.org` | native | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` | — |
-| **Base Sepolia** | `eip155:84532` | `https://sepolia.base.org` | native | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | — |
-
-Contract: `0x6F858C7120290431B606bBa343E3A8737B3dfCB4` (Sepolia)
-
 ## Setting Up an Agent
 
 ```bash
@@ -62,22 +51,32 @@ cd x402s && npm install
 # 2. Set your private key (or omit to use dev key for local testing)
 export AGENT_PRIVATE_KEY=0xYourPrivateKey...
 
-# 3. Check the hub's fee model before funding
-curl -s https://hub-url/.well-known/x402 | jq '{hub: .hubAddress, fee: .feePolicy}'
-# → { "hub": "0xHubAddr...", "fee": { "base": "10", "bps": 30, "gasSurcharge": "0" } }
+# 3. Open a channel and deposit
+npm run channel:open -- 0xHubAddress base usdc 20       # 20 USDC on Base
+npm run channel:open -- 0xHubAddress sepolia eth 0.1    # 0.1 ETH on Sepolia
+npm run channel:open -- 0xHubAddress mainnet usdc 100   # 100 USDC on Ethereum
 
-# 4. Open a channel with the hub and deposit USDC
-#    Use the hub address from step 3 (see "How Much to Fund" below)
-RPC_URL=https://mainnet.base.org \
-CONTRACT_ADDRESS=0x6F858C7120290431B606bBa343E3A8737B3dfCB4 \
-npm run channel:open -- 0xHubAddress 10000000
-
-# 5. Pay things
+# 4. Pay things
 npm run agent:pay -- https://api.example/v1/data
 npm run agent:pay -- 0xPayeeAddress 1000000
 ```
 
-For local testing, skip steps 2-4 — the dev key and off-chain hub work out of the box with `npm run demo:e2e`.
+Networks: `mainnet`, `base`, `sepolia`, `base-sepolia`. Assets: `eth`, `usdc`, `usdt`. The CLI resolves RPCs and token addresses automatically. You can also use env vars directly: `RPC_URL=... CONTRACT_ADDRESS=... npm run channel:open -- 0xAddr 10000000`.
+
+If you try to pay without a channel, the agent queries the hub and tells you what to fund:
+
+```
+No channel open with hub pay.eth.
+
+Hub:     0xCB0A92...
+Fee:     base=10 + 30bps + gas=0
+Per payment: 1000000 + 3010 fee = 1003010
+
+Open a channel:
+  npm run channel:open -- 0xCB0A92... base usdc 20
+```
+
+For local testing, skip steps 2-3 — `npm run demo:e2e` works out of the box.
 
 ## How Much to Fund
 
