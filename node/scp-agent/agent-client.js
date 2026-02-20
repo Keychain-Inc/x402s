@@ -201,9 +201,16 @@ class ScpAgentClient {
     return ethers.utils.keccak256(ethers.utils.toUtf8Bytes(canonical));
   }
 
-  chooseOffer(offers, route) {
-    const hub = offers.find((o) => o.scheme === "statechannel-hub-v1");
-    const direct = offers.find((o) => o.scheme === "statechannel-direct-v1");
+  chooseOffer(offers, route, options = {}) {
+    let filtered = offers;
+    if (options.network) {
+      filtered = filtered.filter((o) => o.network === options.network);
+    }
+    if (options.asset) {
+      filtered = filtered.filter((o) => o.asset.toLowerCase() === options.asset.toLowerCase());
+    }
+    const hub = filtered.find((o) => o.scheme === "statechannel-hub-v1");
+    const direct = filtered.find((o) => o.scheme === "statechannel-direct-v1");
     if (route === "hub") return hub;
     if (route === "direct") return direct;
     return hub || direct;
@@ -482,7 +489,7 @@ class ScpAgentClient {
     }
     const routes = offers.map((o) => o.scheme.replace("statechannel-", "").replace("-v1", ""));
     const route = options.route || "hub";
-    const offer = this.chooseOffer(offers, route);
+    const offer = this.chooseOffer(offers, route, options);
     if (!offer) {
       throw new Error(
         `Payee does not offer "${route}" route.\n` +

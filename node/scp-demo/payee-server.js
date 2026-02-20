@@ -16,6 +16,7 @@ const DEFAULTS = {
   price: process.env.PRICE || "1000000",
   hubName: process.env.HUB_NAME || "pay.eth",
   resourcePath: "/v1/data",
+  routes: null, // { "/v1/data": { price: "1000000" }, "/v1/premium": { price: "5000000" } }
   perfMode: process.env.PERF_MODE === "1",
   payeePrivateKey:
     process.env.PAYEE_PRIVATE_KEY ||
@@ -42,46 +43,63 @@ function sendJson(res, code, payload) {
   res.end(body);
 }
 
-function make402(invoiceId, cfg, payeeAddress) {
-  return {
-    accepts: [
-      {
-        scheme: "statechannel-hub-v1",
-        network: cfg.network,
-        asset: cfg.asset,
-        maxAmountRequired: cfg.price,
-        payTo: cfg.hubName,
-        resource: `http://${cfg.host}:${cfg.port}${cfg.resourcePath}`,
-        extensions: {
-          "statechannel-hub-v1": {
-            hubName: cfg.hubName,
-            hubEndpoint: cfg.hubUrl,
-            mode: "proxy_hold",
-            feeModel: { base: "10", bps: 30 },
-            quoteExpiry: now() + 120,
-            invoiceId,
-            payeeAddress
-          }
-        }
-      },
-      {
-        scheme: "statechannel-direct-v1",
-        network: cfg.network,
-        asset: cfg.asset,
-        maxAmountRequired: cfg.price,
-        payTo: payeeAddress,
-        resource: `http://${cfg.host}:${cfg.port}${cfg.resourcePath}`,
-        extensions: {
-          "statechannel-direct-v1": {
-            mode: "direct",
-            quoteExpiry: now() + 120,
-            invoiceId,
-            payeeAddress
-          }
+function resolvePrice(routeCfg, asset, fallback) {
+  const p = (routeCfg && routeCfg.price) || fallback;
+  if (typeof p === "object") return p[asset] || p[Object.keys(p)[0]] || fallback;
+  return p;
+}
+
+function makeOffers(cfg, payeeAddress, routePath, routeCfg, invoiceStore) {
+  const resource = `http://${cfg.host}:${cfg.port}${routePath || cfg.resourcePath}`;
+  const acceptsList = (routeCfg && routeCfg.accepts) || [
+    { network: cfg.network, asset: cfg.asset, hub: cfg.hubUrl, hubName: cfg.hubName }
+  ];
+  const offers = [];
+  for (const entry of acceptsList) {
+    const network = entry.network || cfg.network;
+    const asset = entry.asset || cfg.asset;
+    const hubEndpoint = entry.hub || cfg.hubUrl;
+    const hubName = entry.hubName || cfg.hubName;
+    const price = entry.price || resolvePrice(routeCfg, asset, cfg.price);
+    const invoiceId = randomId("inv");
+    invoiceStore.set(invoiceId, { createdAt: now(), amount: price });
+    offers.push({
+      scheme: "statechannel-hub-v1",
+      network,
+      asset,
+      maxAmountRequired: price,
+      payTo: hubName,
+      resource,
+      extensions: {
+        "statechannel-hub-v1": {
+          hubName,
+          hubEndpoint,
+          mode: "proxy_hold",
+          feeModel: { base: "10", bps: 30 },
+          quoteExpiry: now() + 120,
+          invoiceId,
+          payeeAddress
         }
       }
-    ]
-  };
+    });
+    offers.push({
+      scheme: "statechannel-direct-v1",
+      network,
+      asset,
+      maxAmountRequired: price,
+      payTo: payeeAddress,
+      resource,
+      extensions: {
+        "statechannel-direct-v1": {
+          mode: "direct",
+          quoteExpiry: now() + 120,
+          invoiceId,
+          payeeAddress
+        }
+      }
+    });
+  }
+  return { accepts: offers };
 }
 
 function parsePaymentHeader(req) {
@@ -201,18 +219,25 @@ async function handle(req, res, ctx) {
   const { cfg, payeeAddress, invoiceStore, consumed } = ctx;
   const u = new URL(req.url, `http://${req.headers.host || `${cfg.host}:${cfg.port}`}`);
 
+  const routeMap = cfg.routes || { [cfg.resourcePath]: { price: cfg.price } };
+  const matchedRoute = routeMap[u.pathname];
   const isPay = req.method === "GET" && u.pathname === "/pay";
-  const isResource = req.method === "GET" && u.pathname === cfg.resourcePath;
 
-  if (!isPay && !isResource) {
+  if (!isPay && !matchedRoute) {
     return sendJson(res, 404, { error: "not found" });
   }
 
   const paymentPayload = parsePaymentHeader(req);
   if (!paymentPayload) {
-    const invoiceId = randomId("inv");
-    invoiceStore.set(invoiceId, { createdAt: now(), amount: cfg.price });
-    return sendJson(res, isPay ? 200 : 402, make402(invoiceId, cfg, payeeAddress));
+    if (isPay) {
+      const allOffers = [];
+      for (const [rPath, rCfg] of Object.entries(routeMap)) {
+        const offers = makeOffers(cfg, payeeAddress, rPath, rCfg, invoiceStore);
+        allOffers.push(...offers.accepts);
+      }
+      return sendJson(res, 200, { accepts: allOffers });
+    }
+    return sendJson(res, 402, makeOffers(cfg, payeeAddress, u.pathname, matchedRoute, invoiceStore));
   }
 
   if (consumed.has(paymentPayload.paymentId)) {
