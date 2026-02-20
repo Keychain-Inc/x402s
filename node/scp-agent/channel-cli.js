@@ -8,7 +8,8 @@ const args = process.argv.slice(3);
 const USAGE = `Usage:
   channel open  <0xAddr> <network> <asset> <amount>       Open with friendly names
   channel open  <0xAddr> <rpcUrl> <0xToken> <rawAmount>   Open with raw values
-  channel fund  <channelId> <amount>                       Deposit into existing channel
+  channel fund  <channelId> <asset> <amount>                Deposit with asset name
+  channel fund  <channelId> <rawAmount>                    Deposit raw amount
   channel close <channelId>                                 Close channel
   channel list                                              List all channels
 
@@ -16,6 +17,8 @@ Examples:
   channel open  0xHub base usdc 20                                          # 20 USDC on Base
   channel open  0xHub sepolia eth 0.1                                       # 0.1 ETH on Sepolia
   channel open  0xHub https://rpc.example 0x833589f...02913 20000000        # raw RPC + token + amount
+  channel fund  0xChannelId usdc 50                                         # fund 50 USDC
+  channel fund  0xChannelId 50000000                                        # fund raw amount
 
 Networks: mainnet, base, sepolia, base-sepolia
 Assets:   eth, usdc, usdt`;
@@ -119,17 +122,31 @@ async function main() {
 
     } else if (cmd === "fund") {
       const channelId = args[0];
-      const humanAmount = args[1];
-      if (!channelId || !humanAmount) {
-        console.error("Usage: channel fund <channelId> <amount>");
+      const arg1 = args[1];
+      const arg2 = args[2];
+      if (!channelId || !arg1) {
+        console.error("Usage: channel fund <channelId> <asset> <amount>");
+        console.error("   or: channel fund <channelId> <rawAmount>");
         process.exit(1);
       }
-      // For fund, we need raw amount or we read channel info to get decimals
-      // Accept raw if it looks like a big number, otherwise try to parse
-      const amount = /^\d+$/.test(humanAmount) && humanAmount.length > 6
-        ? humanAmount
-        : parseAmount(humanAmount, 6); // default USDC decimals
-      console.log(`Funding ${channelId} with ${humanAmount}...`);
+
+      let amount, label;
+      if (arg2) {
+        // fund <channelId> <asset> <amount> — friendly
+        const asset = resolveAsset(8453, arg1); // default chain for decimals lookup
+        amount = parseAmount(arg2, asset.decimals);
+        label = `${arg2} ${asset.symbol} (${amount} raw)`;
+      } else if (/^\d+$/.test(arg1)) {
+        // fund <channelId> <rawAmount> — raw
+        amount = arg1;
+        label = amount;
+      } else {
+        console.error("Usage: channel fund <channelId> <asset> <amount>");
+        console.error("   or: channel fund <channelId> <rawAmount>");
+        process.exit(1);
+      }
+
+      console.log(`Funding ${channelId} with ${label}...`);
       const result = await agent.fundChannel(channelId, amount);
       console.log("Funded!");
       console.log(JSON.stringify(result, null, 2));
