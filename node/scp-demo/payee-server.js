@@ -200,6 +200,13 @@ function validateDirectPayment(paymentPayload, ctx) {
 async function handle(req, res, ctx) {
   const { cfg, payeeAddress, invoiceStore, consumed } = ctx;
   const u = new URL(req.url, `http://${req.headers.host || `${cfg.host}:${cfg.port}`}`);
+
+  if (req.method === "GET" && u.pathname === "/pay") {
+    const invoiceId = randomId("inv");
+    invoiceStore.set(invoiceId, { createdAt: now(), amount: cfg.price });
+    return sendJson(res, 200, make402(invoiceId, cfg, payeeAddress));
+  }
+
   if (req.method !== "GET" || u.pathname !== cfg.resourcePath) {
     return sendJson(res, 404, { error: "not found" });
   }

@@ -34,13 +34,14 @@ function main() {
   console.log(`Payments: ${rows.length}`);
   for (const p of rows) {
     console.log("-----");
-    console.log(`paymentId: ${p.paymentId}`);
-    console.log(`paidAt: ${fmtTs(p.paidAt)}`);
-    console.log(`route: ${p.route || "-"}`);
-    console.log(`resource: ${p.resourceUrl || "-"}`);
-    console.log(`invoiceId: ${p.invoiceId || "-"}`);
-    console.log(`ticketId: ${p.ticketId || "-"}`);
-    console.log(`receiptId: ${(p.receipt && (p.receipt.receiptId || p.receipt.merchantReceiptId)) || "-"}`);
+    console.log(`  paymentId: ${p.paymentId}`);
+    console.log(`  paidAt:    ${fmtTs(p.paidAt)}`);
+    console.log(`  route:     ${p.route || "-"}`);
+    if (p.amount) console.log(`  amount:    ${p.amount}`);
+    if (p.payee) console.log(`  payee:     ${p.payee}`);
+    if (p.resourceUrl) console.log(`  resource:  ${p.resourceUrl}`);
+    if (p.ticketId) console.log(`  ticketId:  ${p.ticketId}`);
+    if (p.receipt) console.log(`  receiptId: ${p.receipt.receiptId || p.receipt.merchantReceiptId || "-"}`);
   }
 }
 

@@ -169,11 +169,35 @@ A ←channel→ B
 
 No hub. Agent signs state directly for payee. Lower fees, but requires a channel per payee.
 
+### Agent-to-Agent Payments
+
+Two agents can pay each other through a shared channel — no hub, no payee server:
+
+```bash
+# Agent A opens a channel with Agent B
+npm run scp:channel:open -- 0xAgentB base usdc 50
+
+# Agent A pays Agent B through the channel
+npm run scp:agent:pay -- 0xChannelId... 1000000
+
+# Agent B sees the payment in their state
+npm run scp:agent:payments
+```
+
+Both sides run the challenge watcher to stay safe. Either side can close the channel on-chain at any time.
+
 ---
 
 ## Protecting Your API with 402 Payments
 
 Any HTTP server can accept SCP payments. The payee server returns a `402` challenge when a request has no payment header, and validates the ticket on retry.
+
+Payees also expose `GET /pay` — returns the same offers as the 402 but with a `200` status, so agents and humans can discover what a payee accepts before paying:
+
+```bash
+curl http://127.0.0.1:4042/pay
+# → { accepts: [{ scheme: "statechannel-hub-v1", price: "1000000", ... }, { scheme: "statechannel-direct-v1", ... }] }
+```
 
 ### 1. The 402 Response
 
@@ -320,14 +344,23 @@ await agent.payResource(url, { route: "direct" });
 The agent persists channels, payments, and watcher proofs to `state/agent-state.json`:
 
 ```javascript
-agent.state.channels    // { "hub:http://...": { channelId, nonce, balA, balB } }
-agent.state.payments    // { "pay_xxx": { paidAt, resourceUrl, route, receipt } }
-agent.state.watch       // { byChannelId: { "0x...": { state, sigB } } }
+agent.state.channels    // { "hub:http://...": { channelId, nonce, balA, balB, endpoint } }
+agent.state.payments    // { "pay_xxx": { paidAt, route, amount, payee, resourceUrl, ticketId, receipt } }
+agent.state.watch       // { byChannelId: { "0x...": { state, sigA, sigB } } }
 ```
 
 View payment history:
 ```bash
 npm run scp:agent:payments
+# Payments: 3
+# -----
+#   paymentId: pay_a1b2c3...
+#   paidAt:    2025-01-15T10:30:00.000Z
+#   route:     hub
+#   amount:    1000000
+#   resource:  https://api.example/v1/data
+#   ticketId:  tkt_x9y8z7...
+#   receiptId: rcpt_m4n5o6...
 ```
 
 ---
