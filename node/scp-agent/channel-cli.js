@@ -6,17 +6,16 @@ const cmd = process.argv[2];
 const args = process.argv.slice(3);
 
 const USAGE = `Usage:
-  channel open  <0xAddr> <network> <asset> <amount>   Open channel with deposit
-  channel fund  <channelId> <amount>                   Deposit into existing channel
-  channel close <channelId>                             Close channel
-  channel list                                          List all channels
+  channel open  <0xAddr> <network> <asset> <amount>       Open with friendly names
+  channel open  <0xAddr> <rpcUrl> <0xToken> <rawAmount>   Open with raw values
+  channel fund  <channelId> <amount>                       Deposit into existing channel
+  channel close <channelId>                                 Close channel
+  channel list                                              List all channels
 
 Examples:
-  channel open  0xHubAddr base usdc 20       Open on Base, deposit 20 USDC
-  channel open  0xHubAddr sepolia eth 0.1    Open on Sepolia, deposit 0.1 ETH
-  channel open  0xHubAddr mainnet usdc 100   Open on Ethereum, deposit 100 USDC
-  channel fund  0xabc123... 50               Fund 50 more (uses channel's asset)
-  channel close 0xabc123...                  Close channel
+  channel open  0xHub base usdc 20                                          # 20 USDC on Base
+  channel open  0xHub sepolia eth 0.1                                       # 0.1 ETH on Sepolia
+  channel open  0xHub https://rpc.example 0x833589f...02913 20000000        # raw RPC + token + amount
 
 Networks: mainnet, base, sepolia, base-sepolia
 Assets:   eth, usdc, usdt`;
@@ -43,21 +42,56 @@ async function main() {
         process.exit(1);
       }
 
-      const networkName = args[1];
-      const assetName = args[2];
-      const humanAmount = args[3];
+      const arg1 = args[1];
+      const arg2 = args[2];
+      const arg3 = args[3];
 
-      if (!networkName || !assetName || !humanAmount) {
+      if (!arg1 || !arg2 || !arg3) {
         console.error("Usage: channel open <0xAddr> <network> <asset> <amount>");
-        console.error("Example: channel open 0xHubAddr base usdc 20");
+        console.error("   or: channel open <0xAddr> <rpcUrl> <0xToken> <rawAmount>");
         process.exit(1);
       }
 
-      const network = resolveNetwork(networkName);
-      const asset = resolveAsset(network.chainId, assetName);
+      // Detect raw mode: arg1 starts with http or arg2 starts with 0x
+      const isRaw = arg1.startsWith("http") || /^0x[a-fA-F0-9]{40}$/.test(arg2);
+
+      let rpcUrl, assetAddr, rawAmount, label;
+      if (isRaw) {
+        rpcUrl = arg1;
+        assetAddr = arg2;
+        rawAmount = arg3;
+        const contract = process.env.CONTRACT_ADDRESS;
+        if (!contract) {
+          console.error("CONTRACT_ADDRESS env var required for raw mode.");
+          process.exit(1);
+        }
+        label = `${assetAddr.slice(0, 10)}...`;
+        console.log(`Opening channel (raw)...`);
+        console.log(`  partner:  ${participantB}`);
+        console.log(`  asset:    ${assetAddr}`);
+        console.log(`  deposit:  ${rawAmount}`);
+        console.log(`  rpc:      ${rpcUrl}`);
+        console.log(`  contract: ${contract}`);
+        console.log();
+        const result = await agent.openChannel(participantB, {
+          rpcUrl,
+          contractAddress: contract,
+          asset: assetAddr,
+          amount: rawAmount
+        });
+        console.log("Channel opened!");
+        console.log(`  channelId: ${result.channelId}`);
+        console.log(`  deposit:   ${rawAmount}`);
+        console.log(`  txHash:    ${result.txHash}`);
+        return;
+      }
+
+      // Friendly mode: network asset amount
+      const network = resolveNetwork(arg1);
+      const asset = resolveAsset(network.chainId, arg2);
       const contract = resolveContract(network.chainId);
-      const rpcUrl = process.env.RPC_URL || network.rpc;
-      const rawAmount = parseAmount(humanAmount, asset.decimals);
+      rpcUrl = process.env.RPC_URL || network.rpc;
+      rawAmount = parseAmount(arg3, asset.decimals);
 
       if (!contract) {
         console.error(`No contract address for ${network.name}. Set CONTRACT_ADDRESS env var.`);
@@ -65,10 +99,10 @@ async function main() {
       }
 
       console.log(`Opening channel on ${network.name}...`);
-      console.log(`  partner: ${participantB}`);
-      console.log(`  asset:   ${asset.symbol} (${asset.address})`);
-      console.log(`  deposit: ${humanAmount} ${asset.symbol} (${rawAmount} raw)`);
-      console.log(`  rpc:     ${rpcUrl}`);
+      console.log(`  partner:  ${participantB}`);
+      console.log(`  asset:    ${asset.symbol} (${asset.address})`);
+      console.log(`  deposit:  ${arg3} ${asset.symbol} (${rawAmount} raw)`);
+      console.log(`  rpc:      ${rpcUrl}`);
       console.log(`  contract: ${contract}`);
       console.log();
 
@@ -80,7 +114,7 @@ async function main() {
       });
       console.log("Channel opened!");
       console.log(`  channelId: ${result.channelId}`);
-      console.log(`  deposit:   ${humanAmount} ${asset.symbol}`);
+      console.log(`  deposit:   ${arg3} ${asset.symbol}`);
       console.log(`  txHash:    ${result.txHash}`);
 
     } else if (cmd === "fund") {

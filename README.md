@@ -61,7 +61,7 @@ npm run agent:pay -- https://api.example/v1/data
 npm run agent:pay -- 0xPayeeAddress 1000000
 ```
 
-Networks: `mainnet`, `base`, `sepolia`, `base-sepolia`. Assets: `eth`, `usdc`, `usdt`. The CLI resolves RPCs and token addresses automatically. You can also use env vars directly: `RPC_URL=... CONTRACT_ADDRESS=... npm run channel:open -- 0xAddr 10000000`.
+Networks: `mainnet`, `base`, `sepolia`, `base-sepolia`. Assets: `eth`, `usdc`, `usdt`. RPCs and token addresses resolve automatically. You can also pass raw values: `npm run channel:open -- 0xAddr https://rpc.example 0xTokenAddr 20000000`.
 
 If you try to pay without a channel, the agent queries the hub and tells you what to fund:
 
