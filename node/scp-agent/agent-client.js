@@ -106,11 +106,15 @@ class ScpAgentClient {
   }
 
   channelForHub(hubEndpoint) {
-    return this.channelForKey(`hub:${hubEndpoint}`);
+    const ch = this.channelForKey(`hub:${hubEndpoint}`);
+    if (ch && !ch.endpoint) { ch.endpoint = hubEndpoint; this.persist(); }
+    return ch;
   }
 
-  channelForDirect(payeeAddress) {
-    return this.channelForKey(`direct:${payeeAddress.toLowerCase()}`);
+  channelForDirect(payeeAddress, endpoint) {
+    const ch = this.channelForKey(`direct:${payeeAddress.toLowerCase()}`);
+    if (ch && endpoint && !ch.endpoint) { ch.endpoint = endpoint; this.persist(); }
+    return ch;
   }
 
   async queryHubInfo(hubEndpoint) {
@@ -143,7 +147,7 @@ class ScpAgentClient {
       `  1000 payments ≈ ${for1000}`,
       ``,
       `Open a channel:`,
-      `  npm run channel:open -- ${hubInfo.address} base usdc <amount>`
+      `  npm run scp:channel:open -- ${hubInfo.address} base usdc <amount>`
     ];
     return lines.join("\n");
   }
@@ -156,7 +160,7 @@ class ScpAgentClient {
     if (debit > balA) {
       throw new Error(
         `Insufficient channel balance: need ${debit} but have ${balA}. ` +
-        `Top up with: npm run channel:fund -- ${ch.channelId} <amount>`
+        `Top up with: npm run scp:channel:fund -- ${ch.channelId} <amount>`
       );
     }
 
@@ -219,7 +223,7 @@ class ScpAgentClient {
       if (hubInfo) {
         throw new Error(this.formatSetupHint(hubInfo, amount));
       }
-      throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run channel:open -- <hubAddress> <deposit>`);
+      throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run scp:channel:open -- <hubAddress> <deposit>`);
     }
 
     const contextHash = this.buildContextHash({
@@ -321,11 +325,11 @@ class ScpAgentClient {
       throw new Error(`amount exceeds maxAmount policy (${amount} > ${maxAmount})`);
     }
 
-    const ch = this.channelForDirect(ext.payeeAddress);
+    const ch = this.channelForDirect(ext.payeeAddress, resourceUrl);
     if (!ch) {
       throw new Error(
         `No direct channel open with ${ext.payeeAddress}.\n` +
-        `Open one with: npm run channel:open -- ${ext.payeeAddress} <deposit>`
+        `Open one with: npm run scp:channel:open -- ${ext.payeeAddress} <deposit>`
       );
     }
 
@@ -397,7 +401,7 @@ class ScpAgentClient {
       if (hubInfo) {
         throw new Error(this.formatSetupHint(hubInfo, amount));
       }
-      throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run channel:open -- <hubAddress> <deposit>`);
+      throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run scp:channel:open -- <hubAddress> <deposit>`);
     }
 
     const contextHash = this.buildContextHash({
@@ -466,10 +470,18 @@ class ScpAgentClient {
 
   async payResource(resourceUrl, options = {}) {
     const offers = await this.discoverOffers(resourceUrl);
+    if (offers.length === 0) {
+      throw new Error("No compatible payment offers from payee.");
+    }
+    const routes = offers.map((o) => o.scheme.replace("statechannel-", "").replace("-v1", ""));
     const route = options.route || "hub";
     const offer = this.chooseOffer(offers, route);
     if (!offer) {
-      throw new Error(`payee does not offer requested route: ${route}`);
+      throw new Error(
+        `Payee does not offer "${route}" route.\n` +
+        `Available: ${routes.join(", ")}\n` +
+        `Try: agent:pay ${resourceUrl} ${routes[0]}`
+      );
     }
     if (offer.scheme === "statechannel-direct-v1") {
       return this.payViaDirect(resourceUrl, offer, options);
@@ -597,6 +609,66 @@ class ScpAgentClient {
     }
 
     throw new Error("no counterparty signature available; request cooperative close from hub or use challenge watcher");
+  }
+
+  channelById(channelId) {
+    for (const [key, ch] of Object.entries(this.state.channels)) {
+      if (ch.channelId === channelId) return { key, ...ch };
+    }
+    return null;
+  }
+
+  async payChannel(channelId, amount, options = {}) {
+    const ch = this.channelById(channelId);
+    if (!ch) throw new Error(`Channel ${channelId} not found in agent state.`);
+
+    const hubMatch = ch.key.match(/^hub:(.+)$/);
+    const directMatch = ch.key.match(/^direct:(.+)$/);
+
+    if (hubMatch) {
+      return this.payAddress(options.payee || this.wallet.address, amount, {
+        hubEndpoint: hubMatch[1],
+        ...options
+      });
+    }
+
+    if (directMatch) {
+      const payeeAddress = directMatch[1];
+      const endpoint = ch.endpoint;
+      if (!endpoint) {
+        throw new Error(
+          `No endpoint stored for direct channel ${channelId.slice(0, 10)}...\n` +
+          `Pay a URL first to establish the endpoint, or use: agent:pay <url> direct`
+        );
+      }
+      const paymentId = randomId("pay");
+      const contextHash = this.buildContextHash({
+        payee: payeeAddress,
+        method: "transfer",
+        paymentId,
+        amount
+      });
+      const state = this.nextChannelState(ch.key, amount, contextHash);
+      const sigA = await signChannelState(state, this.wallet);
+      const paymentPayload = {
+        scheme: "statechannel-direct-v1",
+        paymentId,
+        direct: { payer: this.wallet.address, payee: payeeAddress, amount, channelState: state, sigA }
+      };
+      const res = await this.http.request("GET", endpoint, null, {
+        "PAYMENT-SIGNATURE": JSON.stringify(paymentPayload)
+      });
+      if (res.statusCode !== 200) {
+        throw new Error(`direct payment failed: ${res.statusCode} ${JSON.stringify(res.body)}`);
+      }
+      this.state.payments[paymentId] = {
+        paidAt: now(), payee: payeeAddress, route: "direct", amount
+      };
+      this.persist();
+      return { route: "direct", payee: payeeAddress, amount, response: res.body };
+    }
+
+    throw new Error(`Unknown channel type (key=${ch.key}).`);
   }
 
   listChannels() {

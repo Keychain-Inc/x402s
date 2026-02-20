@@ -27,21 +27,19 @@ Payment flow: `Agent → 402 → Hub quote → sign state → Hub issue ticket �
 
 | Command | What it does |
 |---------|-------------|
-| `npm run agent:pay -- <url> [hub\|direct]` | Pay a 402-protected URL |
-| `npm run agent:pay -- <0xAddr> <network> <asset> <amount> [hubUrl]` | Pay an address (with network) |
-| `npm run agent:pay -- <0xAddr> <asset> <amount> [hubUrl]` | Pay an address (default: base) |
-| `npm run agent:pay -- <0xAddr> <rawAmount> [hubUrl]` | Pay an address (raw) |
-| `npm run agent:payments` | Show payment history |
-| `npm run agent` | Run demo payment (auto-starts hub + payee) |
+| `npm run scp:agent:pay -- <url> [hub\|direct]` | Pay a 402-protected URL |
+| `npm run scp:agent:pay -- <channelId> <amount>` | Pay through an open channel |
+| `npm run scp:agent:payments` | Show payment history |
+| `npm run scp:agent` | Run demo payment (auto-starts hub + payee) |
 
 ### Channels
 
 | Command | What it does |
 |---------|-------------|
-| `npm run channel:open -- <0xAddr> <network> <asset> <amount>` | Open channel with deposit |
-| `npm run channel:fund -- <channelId> <amount>` | Deposit into existing channel |
-| `npm run channel:close -- <channelId>` | Close channel (cooperative or unilateral) |
-| `npm run channel:list` | List all channels + balances |
+| `npm run scp:channel:open -- <0xAddr> <network> <asset> <amount>` | Open channel with deposit |
+| `npm run scp:channel:fund -- <channelId> <amount>` | Deposit into existing channel |
+| `npm run scp:channel:close -- <channelId>` | Close channel (cooperative or unilateral) |
+| `npm run scp:channel:list` | List all channels + balances |
 
 Networks: `mainnet`, `base`, `sepolia`, `base-sepolia`. Assets: `eth`, `usdc`, `usdt`. RPCs and token addresses resolve automatically.
 
@@ -49,18 +47,18 @@ Networks: `mainnet`, `base`, `sepolia`, `base-sepolia`. Assets: `eth`, `usdc`, `
 
 | Command | What it does |
 |---------|-------------|
-| `npm run test:deep` | 8-test deep stack integration suite |
-| `npm run test:all` | Hardhat contract tests + deep stack |
-| `npm run demo:e2e` | Full end-to-end payment test |
-| `npm run demo:direct` | Direct peer-to-peer payment test |
-| `npm run hub:selftest` | Hub HTTP self-test |
+| `npm run scp:test:deep` | 8-test deep stack integration suite |
+| `npm run scp:test:all` | Hardhat contract tests + deep stack |
+| `npm run scp:demo:e2e` | Full end-to-end payment test |
+| `npm run scp:demo:direct` | Direct peer-to-peer payment test |
+| `npm run scp:hub:selftest` | Hub HTTP self-test |
 
 ### Watch
 
 | Command | What it does |
 |---------|-------------|
-| `npm run watch:agent` | Watch channel as agent — auto-challenge if counterparty closes with stale nonce |
-| `npm run watch:hub` | Watch channel as hub |
+| `npm run scp:watch:agent` | Watch channel as agent — auto-challenge if counterparty closes with stale nonce |
+| `npm run scp:watch:hub` | Watch channel as hub |
 
 Requires: `RPC_URL`, `CONTRACT_ADDRESS`, `CHANNEL_ID`, `WATCHER_PRIVATE_KEY`. Optional: `POLL_MS` (default 5000), `SAFETY_BUFFER_SEC` (default 2).
 
@@ -76,26 +74,25 @@ The contract supports enumeration:
 
 | Command | What it does |
 |---------|-------------|
-| `npm run hub` | Start hub server |
-| `npm run payee` | Start payee server |
-| `npm run sim` | Multi-node simulation |
+| `npm run scp:hub` | Start hub server |
+| `npm run scp:payee` | Start payee server |
+| `npm run scp:sim` | Multi-node simulation |
 
 ## Routing rules
 
-1. **pay \<url\>** → `npm run agent:pay -- <url>` (add `direct` for direct route)
-2. **pay \<address\> \<asset\> \<amount\>** → `npm run agent:pay -- <0xAddress> <asset> <amount> [hubUrl]` (e.g. `usdc 5`)
-3. **pay** (no args) → start hub + payee in background, then `npm run agent:pay -- http://127.0.0.1:4042/v1/data`
-4. **open \<address\> \<network\> \<asset\> \<amount\>** → `npm run channel:open -- <0xAddress> <network> <asset> <amount>` (e.g. `base usdc 20`)
-5. **fund \<channelId\> \<amount\>** → `npm run channel:fund -- <channelId> <amount>`
-6. **close \<channelId\>** → `npm run channel:close -- <channelId>`
-7. **balance** / **list** → `npm run channel:list` then `npm run agent:payments`
-8. **verify** / **test** → `npm run test:deep` (fast) or `npm run test:all` (full)
-9. **sim** → `npm run sim` with optional `SIM_AGENTS=10 SIM_PAYEES=5 SIM_ROUNDS=5`
-10. **hub** / **start** → start hub and/or payee servers in background
-11. **state** → read `node/scp-agent/state/agent-state.json`
-12. **watch \<channelId\>** → `ROLE=agent RPC_URL=<rpc> CONTRACT_ADDRESS=<addr> CHANNEL_ID=<id> WATCHER_PRIVATE_KEY=<key> npm run watch:agent` (use `ROLE=hub` + `npm run watch:hub` for hub side)
-13. **channels for \<address\>** → call `getChannelsByParticipant(address)` on-chain to discover all channels for an address, then `getChannel(id)` for each
-14. If unclear → `npm run demo:e2e`
+1. **pay \<url\>** → `npm run scp:agent:pay -- <url>` (add `direct` for direct route)
+2. **pay** (no args) → start hub + payee in background, then `npm run scp:agent:pay -- http://127.0.0.1:4042/v1/data`
+3. **open \<address\> \<network\> \<asset\> \<amount\>** → `npm run scp:channel:open -- <0xAddress> <network> <asset> <amount>` (e.g. `base usdc 20`)
+4. **fund \<channelId\> \<amount\>** → `npm run scp:channel:fund -- <channelId> <amount>`
+5. **close \<channelId\>** → `npm run scp:channel:close -- <channelId>`
+6. **balance** / **list** → `npm run scp:channel:list` then `npm run scp:agent:payments`
+7. **verify** / **test** → `npm run scp:test:deep` (fast) or `npm run scp:test:all` (full)
+8. **sim** → `npm run scp:sim` with optional `SIM_AGENTS=10 SIM_PAYEES=5 SIM_ROUNDS=5`
+9. **hub** / **start** → start hub and/or payee servers in background
+10. **state** → read `node/scp-agent/state/agent-state.json`
+11. **watch \<channelId\>** → `ROLE=agent RPC_URL=<rpc> CONTRACT_ADDRESS=<addr> CHANNEL_ID=<id> WATCHER_PRIVATE_KEY=<key> npm run scp:watch:agent` (use `ROLE=hub` + `npm run scp:watch:hub` for hub side)
+12. **channels for \<address\>** → call `getChannelsByParticipant(address)` on-chain to discover all channels for an address, then `getChannel(id)` for each
+13. If unclear → `npm run scp:demo:e2e`
 
 Channel CLI resolves RPCs and token addresses automatically from network/asset names. You can also override with `RPC_URL` and `CONTRACT_ADDRESS` env vars. Default Sepolia contract: `0x6F858C7120290431B606bBa343E3A8737B3dfCB4`.
 

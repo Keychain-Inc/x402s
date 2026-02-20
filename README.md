@@ -37,7 +37,7 @@ Deployed on Sepolia at `0x6F858C7120290431B606bBa343E3A8737B3dfCB4`.
 ```bash
 cd x402s
 npm install
-npm run demo:e2e
+npm run scp:demo:e2e
 ```
 
 This spins up a hub + payee in-process, runs a full `A -> H -> B` payment, and prints the result.
@@ -48,22 +48,20 @@ This spins up a hub + payee in-process, runs a full `A -> H -> B` payment, and p
 # 1. Install
 cd x402s && npm install
 
-# 2. Set your private key (or omit to use dev key for local testing)
+# 2. Set your private key (or omit for dev mode — virtual channels, no real funds)
 export AGENT_PRIVATE_KEY=0xYourPrivateKey...
 
 # 3. Open a channel and deposit
-npm run channel:open -- 0xHubAddress base usdc 20       # 20 USDC on Base
-npm run channel:open -- 0xHubAddress sepolia eth 0.1    # 0.1 ETH on Sepolia
-npm run channel:open -- 0xHubAddress mainnet usdc 100   # 100 USDC on Ethereum
+npm run scp:channel:open -- 0xHubAddress base usdc 20       # hub channel — 20 USDC on Base
+npm run scp:channel:open -- 0xPayeeAddress base usdc 10     # direct channel — peer-to-peer
 
 # 4. Pay things
-npm run agent:pay -- https://api.example/v1/data
-npm run agent:pay -- 0xPayeeAddress base usdc 5       # 5 USDC on Base
-npm run agent:pay -- 0xPayeeAddress usdc 5            # 5 USDC (default: base)
-npm run agent:pay -- 0xPayeeAddress 5000000           # or raw
+npm run scp:agent:pay -- https://api.example/v1/data           # pay via hub (default)
+npm run scp:agent:pay -- https://api.example/v1/data direct    # pay directly
+npm run scp:agent:pay -- 0xChannelId... 5000000                # pay through channel
 ```
 
-Networks: `mainnet`, `base`, `sepolia`, `base-sepolia`. Assets: `eth`, `usdc`, `usdt`. RPCs and token addresses resolve automatically. You can also pass raw values: `npm run channel:open -- 0xAddr https://rpc.example 0xTokenAddr 20000000`.
+Networks: `mainnet`, `base`, `sepolia`, `base-sepolia`. Assets: `eth`, `usdc`, `usdt`. RPCs and token addresses resolve automatically. You can also pass raw values: `npm run scp:channel:open -- 0xAddr https://rpc.example 0xTokenAddr 20000000`.
 
 If you try to pay without a channel, the agent queries the hub and tells you what to fund:
 
@@ -75,10 +73,10 @@ Fee:     base=10 + 30bps + gas=0
 Per payment: 1000000 + 3010 fee = 1003010
 
 Open a channel:
-  npm run channel:open -- 0xCB0A92... base usdc 20
+  npm run scp:channel:open -- 0xCB0A92... base usdc 20
 ```
 
-For local testing, skip steps 2-3 — `npm run demo:e2e` works out of the box.
+For local testing, skip steps 2-3 — `npm run scp:demo:e2e` works out of the box.
 
 ## How Much to Fund
 
@@ -103,32 +101,55 @@ Agent funds Agent↔Hub. Hub funds Hub↔Payee. Payees don't deposit.
 
 ```bash
 # Terminal 1 — hub
-npm run hub
+npm run scp:hub
 
 # Terminal 2 — payee
-npm run payee
+npm run scp:payee
 
 # Terminal 3 — agent pays
-npm run agent
+npm run scp:agent
 ```
 
 ## All Commands
 
-| Command | What it does |
-|---------|-------------|
-| `npm run hub` | Start hub on :4021 |
-| `npm run payee` | Start payee on :4042 |
-| `npm run agent` | Agent pays payee via hub |
-| `npm run agent:payments` | Show agent payment history |
-| `npm run demo:e2e` | Full end-to-end (hub + payee + agent in one process) |
-| `npm run demo:direct` | Direct A-to-B payment (no hub routing) |
-| `npm run sim` | Multi-agent, multi-payee simulation |
-| `npm run sim:mixed` | Mixed hub + direct payments |
-| `npm run test` | 17 on-chain contract tests |
-| `npm run test:deep` | 8 deep-stack integration tests |
-| `npm run test:all` | All tests |
-| `npm run compile` | Compile Solidity |
-| `npm run deploy:sepolia` | Deploy to Sepolia |
+**Pay**
+
+| Command | |
+|---------|---|
+| `scp:agent:pay -- <url> [hub\|direct]` | Pay a 402-protected URL |
+| `scp:agent:pay -- <channelId> <amount>` | Pay through an open channel |
+| `scp:agent:payments` | Show payment history |
+
+**Channels**
+
+| Command | |
+|---------|---|
+| `scp:channel:open -- <0xAddr> <network> <asset> <amount>` | Open + deposit |
+| `scp:channel:fund -- <channelId> <amount>` | Deposit more |
+| `scp:channel:close -- <channelId>` | Close channel |
+| `scp:channel:list` | List channels + balances |
+
+**Infrastructure**
+
+| Command | |
+|---------|---|
+| `scp:hub` | Start hub on :4021 |
+| `scp:payee` | Start payee on :4042 |
+| `scp:watch:agent` | Watch channel — auto-challenge stale closes |
+| `scp:watch:hub` | Watch as hub side |
+
+**Test & Deploy**
+
+| Command | |
+|---------|---|
+| `scp:test` | 17 on-chain contract tests |
+| `scp:test:deep` | 8 deep-stack integration tests |
+| `scp:test:all` | All tests |
+| `scp:demo:e2e` | Full end-to-end payment |
+| `scp:demo:direct` | Direct peer-to-peer payment |
+| `scp:sim` | Multi-agent simulation |
+| `scp:compile` | Compile Solidity |
+| `scp:deploy:sepolia` | Deploy to Sepolia |
 
 ## Payment Routes
 
@@ -231,7 +252,7 @@ The included weather API (`node/weather-api/server.js`) is a complete payee impl
 
 ```bash
 # Start hub + weather API
-npm run hub &
+npm run scp:hub &
 HOST=127.0.0.1 PORT=4080 node node/weather-api/server.js
 ```
 
@@ -306,7 +327,7 @@ agent.state.watch       // { byChannelId: { "0x...": { state, sigB } } }
 
 View payment history:
 ```bash
-npm run agent:payments
+npm run scp:agent:payments
 ```
 
 ---
@@ -404,7 +425,7 @@ Deploy your own:
 ```bash
 RPC_URL=https://rpc.sepolia.org \
 DEPLOYER_KEY=0x... \
-npm run deploy:sepolia
+npm run scp:deploy:sepolia
 ```
 
 ---
@@ -420,12 +441,12 @@ RPC_URL=https://rpc.sepolia.org \
 CONTRACT_ADDRESS=0x6F858C7120290431B606bBa343E3A8737B3dfCB4 \
 CHANNEL_ID=0x... \
 WATCHER_PRIVATE_KEY=0x... \
-npm run watch:agent
+npm run scp:watch:agent
 
 # Watch as hub
 ROLE=hub \
 RPC_URL=... CONTRACT_ADDRESS=... CHANNEL_ID=... WATCHER_PRIVATE_KEY=... \
-npm run watch:hub
+npm run scp:watch:hub
 ```
 
 The watcher reads local proof material (agent state or hub store) and submits `challenge()` if `localNonce > onchainNonce` and the deadline hasn't passed.

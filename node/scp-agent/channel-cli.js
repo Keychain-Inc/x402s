@@ -169,9 +169,10 @@ async function main() {
       } else {
         console.log(`Channels: ${channels.length}`);
         for (const ch of channels) {
+          const hubMatch = ch.key.match(/^hub:(.+)$/);
           console.log("-----");
-          console.log(`  key:       ${ch.key}`);
           console.log(`  channelId: ${ch.channelId}`);
+          if (hubMatch) console.log(`  hub:       ${hubMatch[1]}`);
           console.log(`  balA:      ${ch.balA}`);
           console.log(`  balB:      ${ch.balB}`);
           console.log(`  nonce:     ${ch.nonce}`);
