@@ -18,11 +18,13 @@ if (!cmd || cmd === "help") {
 }
 
 async function main() {
-  const agent = new ScpAgentClient({
+  const opts = {
     networkAllowlist: ["eip155:8453"],
     maxFeeDefault: process.env.MAX_FEE || "5000",
     maxAmountDefault: process.env.MAX_AMOUNT || "5000000"
-  });
+  };
+  if (process.env.AGENT_PRIVATE_KEY) opts.privateKey = process.env.AGENT_PRIVATE_KEY;
+  const agent = new ScpAgentClient(opts);
 
   try {
     if (cmd === "open") {

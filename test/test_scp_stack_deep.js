@@ -21,7 +21,7 @@ describe("SCP Deep Stack", function () {
   let ScpAgentClient;
   let verifyTicket;
   let recoverChannelStateSigner;
-  let readLocalProof;
+  let readLocalProofForChannel;
   let PAYEE_ADDRESS;
   let hub;
   let payee;
@@ -147,7 +147,7 @@ describe("SCP Deep Stack", function () {
     ({ ScpAgentClient } = require("../node/scp-agent/agent-client"));
     ({ verifyTicket } = require("../node/scp-hub/ticket"));
     ({ recoverChannelStateSigner } = require("../node/scp-hub/state-signing"));
-    ({ readLocalProof } = require("../node/scp-watch/challenge-watcher"));
+    ({ readLocalProofForChannel } = require("../node/scp-watch/challenge-watcher"));
 
     hub = createHubServer();
     payee = createPayeeServer();
@@ -271,16 +271,15 @@ describe("SCP Deep Stack", function () {
     expect(intersect.length).to.be.greaterThan(0);
     const channelId = intersect[intersect.length - 1];
 
-    process.env.CHANNEL_ID = channelId;
     process.env.ROLE = "agent";
     process.env.AGENT_STATE_PATH = agentStatePath;
-    const agentProof = readLocalProof();
+    const agentProof = readLocalProofForChannel(channelId, "agent");
     expect(agentProof).to.not.eq(null);
     expect(agentProof.counterpartySig).to.be.a("string");
 
     process.env.ROLE = "hub";
     process.env.HUB_STORE_PATH = storePath;
-    const hubProof = readLocalProof();
+    const hubProof = readLocalProofForChannel(channelId, "hub");
     expect(hubProof).to.not.eq(null);
     expect(hubProof.counterpartySig).to.be.a("string");
   });

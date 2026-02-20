@@ -42,6 +42,57 @@ npm run demo:e2e
 
 This spins up a hub + payee in-process, runs a full `A -> H -> B` payment, and prints the result.
 
+## Setting Up an Agent
+
+```bash
+# 1. Install
+cd x402s && npm install
+
+# 2. Set your private key (or omit to use dev key for local testing)
+export AGENT_PRIVATE_KEY=0xYourPrivateKey...
+
+# 3. Check the hub's fee model before funding
+curl -s https://hub-url/.well-known/x402 | jq '{hub: .hubAddress, fee: .feePolicy}'
+# → { "hub": "0xHubAddr...", "fee": { "base": "10", "bps": 30, "gasSurcharge": "0" } }
+
+# 4. Open a channel with the hub and deposit USDC
+#    Use the hub address from step 3, deposit enough for your expected usage (see "How Much to Fund")
+RPC_URL=https://sepolia.infura.io/v3/KEY \
+CONTRACT_ADDRESS=0x6F858C7120290431B606bBa343E3A8737B3dfCB4 \
+npm run channel:open -- 0xHubAddress 10000000
+
+# 5. Pay things
+npm run agent:pay -- https://api.example/v1/data
+npm run agent:pay -- 0xPayeeAddress 1000000
+```
+
+For local testing, skip steps 2-4 — the dev key and off-chain hub work out of the box with `npm run demo:e2e`.
+
+## How Much to Fund
+
+There are two channels in a hub-routed payment:
+
+```
+Agent ──deposit──► [Agent↔Hub channel] ──fee stays──► Hub ──payment──► [Hub↔Payee channel] ──► Payee
+```
+
+**Agent funds Agent↔Hub channel.** Each payment debits `price + hub fee` from your balance.
+but
+**Hub funds Hub↔Payee channel.** The hub pre-deposits and shifts balance to the payee per payment. Payees don't deposit anything.
+
+With defaults (USDC, fee base=10, bps=30):
+
+| Price per request | Hub fee | Agent pays | Fund for 100 | Fund for 1000 |
+|-------------------|---------|------------|-------------|--------------|
+| $0.01 (10,000) | 13 | 10,013 | ~$1.00 | ~$10.01 |
+| $0.10 (100,000) | 310 | 100,310 | ~$10.03 | ~$100.31 |
+| $0.50 (500,000) | 1,510 | 501,510 | ~$50.15 | ~$501.51 |
+| $1.00 (1,000,000) | 3,010 | 1,003,010 | ~$100.30 | ~$1,003.01 |
+
+**Formula:** `deposit = expected_payments * (price + fee)`
+
+Deposit more anytime with `channel:fund`. The hub keeps fee revenue; the payee gets the full price on settlement.
+
 ## Run the Stack
 
 ```bash
@@ -138,43 +189,20 @@ Key fields:
 
 ### 2. Ticket Verification
 
-When the agent retries with a `PAYMENT-SIGNATURE` header, verify before serving:
+When the agent retries with a `PAYMENT-SIGNATURE` header, one call does everything:
 
 ```javascript
-const { verifyTicket } = require("x402s/node/scp-hub/ticket");
+const { verifyPayment } = require("x402s/node/scp-hub/ticket");
 
-const payload = JSON.parse(req.headers["payment-signature"]);
-const ticket = payload.ticket;
+const { ok, error, ticket } = verifyPayment(req.headers["payment-signature"], {
+  hub: "0xHubAddress...",
+  payee: "0xMyAddress...",
+  amount: "1000000"
+});
 
-// 1. Verify hub signature
-const signer = verifyTicket(ticket);
-if (!signer) return res.status(402).json({ error: "invalid signature" });
+if (!ok) return res.status(402).json({ error });
 
-// 2. Verify signer is the expected hub
-if (signer.toLowerCase() !== KNOWN_HUB_ADDRESS.toLowerCase())
-  return res.status(402).json({ error: "unknown hub" });
-
-// 3. Verify ticket is for you
-if (ticket.payee.toLowerCase() !== YOUR_ADDRESS.toLowerCase())
-  return res.status(402).json({ error: "wrong payee" });
-
-// 4. Verify amount matches your price
-if (ticket.amount !== "1000000")
-  return res.status(402).json({ error: "wrong amount" });
-
-// 5. Verify not expired
-if (ticket.expiry < Math.floor(Date.now() / 1000))
-  return res.status(402).json({ error: "expired" });
-
-// 6. Verify invoice binding
-if (ticket.invoiceId !== expectedInvoiceId)
-  return res.status(402).json({ error: "invoice mismatch" });
-
-// 7. Check idempotency (don't double-serve)
-if (consumed.has(payload.paymentId))
-  return res.status(200).json(consumed.get(payload.paymentId));
-
-// All checks pass — serve the resource
+// Paid — serve the resource
 ```
 
 ### 3. Environment Variables (Payee)
