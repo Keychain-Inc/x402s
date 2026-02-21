@@ -17,9 +17,24 @@ Operate the x402 State Channel Protocol stack. All commands run from the `x402s/
 - **Hub** (`node/scp-hub/server.js`) — payment router, port 4021
 - **Payee** (`node/scp-demo/payee-server.js`) — resource server with 402 challenge, port 4042
 - **Agent** (`node/scp-agent/agent-client.js`) — `ScpAgentClient` class: discovers offers, quotes, signs state, issues tickets, retries with payment proof
-- **Contract** — `X402StateChannel.sol` deployed at `0x6F858C7120290431B606bBa343E3A8737B3dfCB4` on Sepolia
+- **Contract** — `X402StateChannel.sol` deployed at CREATE2 canonical address `0x07ECA6701062Db12eDD04bEa391eD226C95aaD4b` across chains
 
 Payment flow: `Agent → 402 → Hub quote → sign state → Hub issue ticket → paid retry to Payee`
+
+Offer selection behavior:
+- Filter offers by `network` / `asset` when provided.
+- Split into hub and direct candidates.
+- Score channel readiness: `2` (channel exists and funded), `1` (channel exists underfunded), `0` (no channel).
+- Tie-break by smaller `maxAmountRequired`, then original order.
+- `route=hub`: pick best hub only.
+- `route=direct`: pick best direct only.
+- `route=auto`: pick direct only when direct score is `>= 2`; otherwise pick hub (or fallback direct if no hub exists).
+- If multiple hub offers exist and no hub channel exists yet, check wallet affordability per hub offer and keep only affordable hub offers.
+- If no hub offer is affordable (and route is `hub`, or no direct fallback exists), fail with a clear error.
+
+First-launch setup:
+- `npm run scp:hub`, `npm run scp:payee`, and `npm run scp:agent` auto-run a terminal wizard when `.env` is missing.
+- Run `npm run scp:wizard` directly to create or refresh `.env` + offers config.
 
 ## Commands
 
@@ -30,7 +45,7 @@ Payment flow: `Agent → 402 → Hub quote → sign state → Hub issue ticket �
 | `npm run scp:agent:pay -- <url> [hub\|direct]` | Pay a 402-protected URL |
 | `npm run scp:agent:pay -- <channelId> <amount>` | Pay through an open channel |
 | `npm run scp:agent:payments` | Show payment history |
-| `npm run scp:agent` | Run demo payment (auto-starts hub + payee) |
+| `npm run scp:agent` | Show agent status/help (optional local `/pay` helper) |
 
 ### Channels
 
@@ -75,25 +90,87 @@ The contract supports enumeration:
 | Command | What it does |
 |---------|-------------|
 | `npm run scp:hub` | Start hub server |
+| `npm run scp:wizard` | Interactive first-launch config wizard |
 | `npm run scp:payee` | Start payee server |
 | `npm run scp:sim` | Multi-node simulation |
+
+## Remote URL Pay Requirements
+
+For `npm run scp:agent:pay -- <url> hub` against public endpoints:
+
+1. Set `AGENT_PRIVATE_KEY` (never pass key as the second positional arg).
+2. Agent discovers offers from `<url>` first (`/pay` is optional fallback).
+3. Set `NETWORK` to the offer network (`sepolia` for `eip155:11155111` on `http://159.223.150.70/hub/sepolia`).
+4. Set `MAX_AMOUNT` high enough for offer `maxAmountRequired`.
+5. For `pay.eth` at `http://159.223.150.70/hub/sepolia`, set `MAX_FEE=0` (zero-fee profile).
+6. Ensure a funded channel exists for the exact offer `hubEndpoint` value.
+7. Ensure offer endpoints are public:
+   - `accepts[].resource` must be reachable from the agent machine.
+   - `accepts[].extensions["statechannel-hub-v1"].hubEndpoint` must be reachable from the agent machine (use `http://159.223.150.70/hub/sepolia` for `pay.eth` Sepolia route).
+   - avoid `127.0.0.1` in offers served to remote agents.
+8. Fund channels for expected usage volume, not one payment.
+
+Example command shape:
+
+```bash
+AGENT_PRIVATE_KEY=0x... NETWORK=sepolia MAX_AMOUNT=1000000000000 MAX_FEE=0 \
+HUB_URL=http://159.223.150.70/hub/sepolia npm run scp:agent:pay -- http://159.223.150.70/meow hub
+```
+
+On-chain note: `scp:channel:open` and `scp:channel:fund` require `RPC_URL` (and `CONTRACT_ADDRESS` if not auto-resolved).
+
+## Channel Funding Sizing
+
+Use this sizing for new agents:
+
+```text
+required_balance ~= expected_payments * (amount_per_payment + fee_per_payment)
+fee_per_payment = base + floor(amount * bps / 10000) + gasSurcharge
+```
+
+Example (`amount=100000000000`, `base=0`, `bps=0`, `gasSurcharge=0`):
+
+```text
+fee = 0
+totalDebit per payment = 100000000000
+100 payments ~= 10000000000000 wei
+```
+
+Always keep a safety buffer above expected usage.
+
+## New Agent Onboarding
+
+For each new agent wallet:
+
+1. Set `AGENT_PRIVATE_KEY`, `NETWORK`, `RPC_URL`, `CONTRACT_ADDRESS`.
+2. Query hub metadata (`/.well-known/x402`) and capture hub address.
+3. Open channel from that wallet to hub address.
+4. Fund using expected usage sizing formula.
+5. Validate via `scp:channel:list`, then run one paid URL call.
+
+## Common Errors -> Fix
+
+- `No compatible payment offers from payee` -> check `NETWORK`, offer network, and endpoint reachability.
+- `SCP_003_FEE_EXCEEDS_MAX` -> raise `MAX_FEE`.
+- `amount exceeds maxAmount policy` -> raise `MAX_AMOUNT`.
+- `Insufficient channel balance` -> fund channel.
+- `RPC_URL required for on-chain operations` -> set `RPC_URL`.
 
 ## Routing rules
 
 1. **pay \<url\>** → `npm run scp:agent:pay -- <url>` (add `direct` for direct route)
-2. **pay** (no args) → start hub + payee in background, then `npm run scp:agent:pay -- http://127.0.0.1:4042/v1/data`
-3. **open \<address\> \<network\> \<asset\> \<amount\>** → `npm run scp:channel:open -- <0xAddress> <network> <asset> <amount>` (e.g. `base usdc 20`)
-4. **fund \<channelId\> \<amount\>** → `npm run scp:channel:fund -- <channelId> <amount>`
-5. **close \<channelId\>** → `npm run scp:channel:close -- <channelId>`
-6. **balance** / **list** → `npm run scp:channel:list` then `npm run scp:agent:payments`
-7. **verify** / **test** → `npm run scp:test:deep` (fast) or `npm run scp:test:all` (full)
-8. **sim** → `npm run scp:sim` with optional `SIM_AGENTS=10 SIM_PAYEES=5 SIM_ROUNDS=5`
-9. **hub** / **start** → start hub and/or payee servers in background
-10. **state** → read `node/scp-agent/state/agent-state.json`
-11. **watch \<channelId\>** → `ROLE=agent RPC_URL=<rpc> CONTRACT_ADDRESS=<addr> CHANNEL_ID=<id> WATCHER_PRIVATE_KEY=<key> npm run scp:watch:agent` (use `ROLE=hub` + `npm run scp:watch:hub` for hub side)
-12. **channels for \<address\>** → call `getChannelsByParticipant(address)` on-chain to discover all channels for an address, then `getChannel(id)` for each
-13. If unclear → `npm run scp:demo:e2e`
+2. **open \<address\> \<network\> \<asset\> \<amount\>** → `npm run scp:channel:open -- <0xAddress> <network> <asset> <amount>` (e.g. `base usdc 20`)
+3. **fund \<channelId\> \<amount\>** → `npm run scp:channel:fund -- <channelId> <amount>`
+4. **close \<channelId\>** → `npm run scp:channel:close -- <channelId>`
+5. **balance** / **list** → `npm run scp:channel:list` then `npm run scp:agent:payments`
+6. **verify** / **test** → `npm run scp:test:deep` (fast) or `npm run scp:test:all` (full)
+7. **sim** → `npm run scp:sim` with optional `SIM_AGENTS=10 SIM_PAYEES=5 SIM_ROUNDS=5`
+8. **start** / **payee** → start payee server in background
+9. **state** → read `node/scp-agent/state/agent-state.json`
+10. **watch \<channelId\>** → `ROLE=agent RPC_URL=<rpc> CONTRACT_ADDRESS=<addr> CHANNEL_ID=<id> WATCHER_PRIVATE_KEY=<key> npm run scp:watch:agent` (use `ROLE=hub` + `npm run scp:watch:hub` for hub side)
+11. **channels for \<address\>** → call `getChannelsByParticipant(address)` on-chain to discover all channels for an address, then `getChannel(id)` for each
+12. If unclear → `npm run scp:demo:e2e`
 
-Channel CLI resolves RPCs and token addresses automatically from network/asset names. You can also override with `RPC_URL` and `CONTRACT_ADDRESS` env vars. Default Sepolia contract: `0x6F858C7120290431B606bBa343E3A8737B3dfCB4`.
+Channel CLI resolves RPCs and token addresses automatically from network/asset names. You can also override with `RPC_URL` and `CONTRACT_ADDRESS` env vars. Default CREATE2 contract in this repo flow (all chains): `0x07ECA6701062Db12eDD04bEa391eD226C95aaD4b`.
 
 After running commands, summarize concisely: what happened, amounts, any errors.
