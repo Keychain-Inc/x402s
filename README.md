@@ -164,8 +164,10 @@ Use this profile for real usage (not local demo).
 - Configure:
   - `HUB_PRIVATE_KEY`
   - `RPC_URL`, `NETWORK`, `CONTRACT_ADDRESS`
+  - `SETTLEMENT_MODE` (`cooperative_close` default; `direct` optional)
   - `HUB_ADMIN_TOKEN` (recommended)
   - `PAYEE_AUTH_MAX_SKEW_SEC` (recommended)
+  - In `cooperative_close` mode, `/v1/payee/settle` must include payee `sigB` over latest `GET /v1/payee/channel-state` `latestState`.
 - For multi-instance/worker operation:
   - Use shared storage (`REDIS_URL`) before enabling multi-worker mode.
   - Do not use unsafe cluster settings in production without shared state.
@@ -544,6 +546,7 @@ return res.json(response);
 | `GAS_SURCHARGE` | `0` | Extra gas pass-through |
 | `RPC_URL` | unset | Required for on-chain actions |
 | `CONTRACT_ADDRESS` | unset | Channel contract address |
+| `SETTLEMENT_MODE` | `cooperative_close` | Hub payee settlement mode (`cooperative_close` or `direct`) |
 | `STORE_PATH` | `./data/store.json` | File-backed store path |
 | `REDIS_URL` | unset | Optional shared Redis backend |
 | `HUB_WORKERS` | `0` | Cluster workers (`0` = single process) |

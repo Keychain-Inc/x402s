@@ -69,8 +69,10 @@ const RATE_LIMIT_QUOTE = Math.max(0, Number(process.env.RATE_LIMIT_QUOTE || 240)
 const RATE_LIMIT_ISSUE = Math.max(0, Number(process.env.RATE_LIMIT_ISSUE || 240));
 const RATE_LIMIT_REFUNDS = Math.max(0, Number(process.env.RATE_LIMIT_REFUNDS || 60));
 const QUOTE_SWEEP_INTERVAL_SEC = Math.max(1, Number(process.env.QUOTE_SWEEP_INTERVAL_SEC || 30));
+const SETTLEMENT_MODE = String(process.env.SETTLEMENT_MODE || "cooperative_close").toLowerCase();
 const CHANNEL_ABI = [
   "function openChannel(address hub, address asset, uint256 amount, uint64 challengePeriodSec, uint64 channelExpiry, bytes32 salt) external payable returns (bytes32 channelId)",
+  "function cooperativeClose(tuple(bytes32 channelId, uint64 stateNonce, uint256 balA, uint256 balB, bytes32 locksRoot, uint64 stateExpiry, bytes32 contextHash) st, bytes sigA, bytes sigB) external",
   "event ChannelOpened(bytes32 indexed channelId, address indexed participantA, address indexed participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry)"
 ];
 const STORE_PATH = process.env.STORE_PATH || path.resolve(__dirname, "./data/store.json");
@@ -221,6 +223,15 @@ function parseIdempotencyKey(req, body) {
     throw new Error("idempotencyKey must match [A-Za-z0-9:_-]{6,128}");
   }
   return raw;
+}
+
+function parseSettlementMode(value) {
+  const raw = String(value || SETTLEMENT_MODE || "cooperative_close").trim().toLowerCase();
+  if (raw === "cooperative_close" || raw === "channel_close" || raw === "cooperative") {
+    return "cooperative_close";
+  }
+  if (raw === "direct") return "direct";
+  throw new Error("mode must be cooperative_close|direct");
 }
 
 function ensureIndexBucket(state, key) {
@@ -621,7 +632,7 @@ async function handleRequest(req, res) {
       let hubChannelAck = null;
       const payeeKey = String(ticket.payee || "").toLowerCase();
       const hc = await store.getHubChannel(payeeKey);
-      if (hc && hc.channelId) {
+      if (hc && hc.channelId && hc.status !== "closed") {
         const paymentAmount = BigInt(ticket.amount);
         if (BigInt(hc.balA) < paymentAmount) {
           return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "hub-payee channel balance insufficient"));
@@ -644,6 +655,7 @@ async function handleRequest(req, res) {
         hc.nonce = newNonce;
         hc.latestState = hcState;
         hc.sigA = hcSigA;
+        hc.status = "open";
         await store.setHubChannel(payeeKey, hc);
         hubChannelAck = { channelId: hc.channelId, stateNonce: newNonce, balB: newBalH, sigA: hcSigA };
       }
@@ -938,7 +950,7 @@ async function handleRequest(req, res) {
         return sendJson(res, 503, makeError("SCP_010_SETTLEMENT_UNAVAILABLE", "hub has no on-chain provider or contract (set RPC_URL, CONTRACT_ADDRESS)", true));
       }
       const existing = await store.getHubChannel(payee);
-      if (existing && existing.channelId) {
+      if (existing && existing.channelId && existing.status !== "closed") {
         return sendJson(res, 200, { channelId: existing.channelId, message: "already open", ...existing });
       }
       const asset = body.asset || ethers.constants.AddressZero;
@@ -966,6 +978,7 @@ async function handleRequest(req, res) {
           totalDeposit: deposit.toString(),
           balA: deposit.toString(),
           balB: "0",
+          status: "open",
           nonce: 0,
           latestState: null,
           sigA: null,
@@ -986,7 +999,7 @@ async function handleRequest(req, res) {
       }
       if (!requirePayeeAuth(req, res, pathname, payee, body)) return;
       const existing = await store.getHubChannel(payee);
-      if (existing && existing.channelId) {
+      if (existing && existing.channelId && existing.status !== "closed") {
         return sendJson(res, 200, { message: "already registered", ...existing });
       }
       const hubChannel = {
@@ -996,6 +1009,7 @@ async function handleRequest(req, res) {
         totalDeposit: body.totalDeposit || "0",
         balA: body.totalDeposit || "0",
         balB: "0",
+        status: "open",
         nonce: 0,
         latestState: null,
         sigA: null
@@ -1021,6 +1035,7 @@ async function handleRequest(req, res) {
         totalDeposit: hc.totalDeposit,
         balA: hc.balA,
         balB: hc.balB,
+        status: hc.status || "open",
         nonce: hc.nonce,
         latestState: hc.latestState,
         sigA: hc.sigA
@@ -1039,6 +1054,12 @@ async function handleRequest(req, res) {
         return sendJson(res, 503, makeError("SCP_010_SETTLEMENT_UNAVAILABLE", "hub has no on-chain provider (set RPC_URL)", true));
       }
       const asset = String(body.asset || ethers.constants.AddressZero);
+      let settlementMode;
+      try {
+        settlementMode = parseSettlementMode(body.mode);
+      } catch (e) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", e.message));
+      }
       let idemKey;
       try {
         idemKey = parseIdempotencyKey(req, body);
@@ -1046,7 +1067,7 @@ async function handleRequest(req, res) {
         return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", e.message));
       }
       const settlementId = randomId("stl");
-      const idemScopeKey = idemKey ? `${payee}:${asset.toLowerCase()}:${idemKey}` : "";
+      const idemScopeKey = idemKey ? `${payee}:${asset.toLowerCase()}:${settlementMode}:${idemKey}` : "";
       let idemReplay = null;
       if (idemScopeKey) {
         await store.tx((s) => {
@@ -1066,6 +1087,7 @@ async function handleRequest(req, res) {
             settlementId,
             payee,
             asset,
+            mode: settlementMode,
             idempotencyKey: idemKey,
             status: "pending",
             createdAt: now()
@@ -1079,6 +1101,7 @@ async function handleRequest(req, res) {
               asset: idemReplay.asset,
               txHash: idemReplay.txHash,
               settledCount: idemReplay.settledCount,
+              mode: idemReplay.mode,
               settlementId: idemReplay.settlementId,
               idempotentReplay: true
             });
@@ -1127,40 +1150,93 @@ async function handleRequest(req, res) {
               status: "completed",
               amount: "0",
               settledCount: 0,
+              mode: settlementMode,
               txHash: null,
               completedAt: now()
             };
           });
         }
-        return sendJson(res, 200, { payee, amount: "0", message: "nothing to settle" });
+        return sendJson(res, 200, { payee, amount: "0", message: "nothing to settle", mode: settlementMode });
       }
 
       // Send on-chain
       let txHash;
+      let closeChannelId = null;
+      let closeSigB = "";
+      const failSettlement = (status, code, message) => {
+        const err = new Error(message);
+        err.httpStatus = status;
+        err.errorCode = code;
+        throw err;
+      };
       try {
-        if (asset === ethers.constants.AddressZero) {
-          const tx = await signer.sendTransaction({
-            to: ethers.utils.getAddress(payee),
-            value: unsettled,
-            gasLimit: 21000
-          });
+        if (settlementMode === "cooperative_close") {
+          if (!CONTRACT_ADDRESS) {
+            failSettlement(503, "SCP_010_SETTLEMENT_UNAVAILABLE", "contract address required for cooperative_close settlement");
+          }
+          const hc = await store.getHubChannel(payee);
+          if (!hc || !hc.channelId || hc.status === "closed" || !hc.latestState || !hc.sigA) {
+            failSettlement(409, "SCP_007_CHANNEL_NOT_FOUND", "no open hub-payee channel with signed state");
+          }
+          let channelBalB;
+          try {
+            channelBalB = BigInt(hc.balB || "0");
+          } catch (_e) {
+            failSettlement(409, "SCP_009_POLICY_VIOLATION", "invalid hub-payee channel balance");
+          }
+          if (channelBalB !== unsettled) {
+            failSettlement(
+              409,
+              "SCP_009_POLICY_VIOLATION",
+              "hub-payee channel balB does not match unsettled ledger; use direct mode or reopen channel"
+            );
+          }
+          closeSigB = typeof body.sigB === "string" ? body.sigB : "";
+          if (!closeSigB) {
+            failSettlement(400, "SCP_009_POLICY_VIOLATION", "sigB is required for cooperative_close settlement");
+          }
+          let recoveredB;
+          try {
+            recoveredB = recoverChannelStateSigner(hc.latestState, closeSigB);
+          } catch (_e) {
+            failSettlement(409, "SCP_009_POLICY_VIOLATION", "invalid sigB");
+          }
+          if (!recoveredB || recoveredB.toLowerCase() !== payee.toLowerCase()) {
+            failSettlement(409, "SCP_009_POLICY_VIOLATION", "sigB must recover to payee");
+          }
+          const contract = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, signer);
+          const tx = await contract.cooperativeClose(hc.latestState, hc.sigA, closeSigB, { gasLimit: 250000 });
           const receipt = await tx.wait(1);
           if (!receipt || Number(receipt.status) !== 1) {
-            throw new Error("settlement transaction reverted");
+            failSettlement(500, "SCP_011_SETTLEMENT_FAILED", "cooperative close reverted");
           }
           txHash = tx.hash;
+          closeChannelId = hc.channelId;
         } else {
-          const erc20 = new ethers.Contract(
-            asset,
-            ["function transfer(address to, uint256 amount) returns (bool)"],
-            signer
-          );
-          const tx = await erc20.transfer(ethers.utils.getAddress(payee), unsettled, { gasLimit: 60000 });
-          const receipt = await tx.wait(1);
-          if (!receipt || Number(receipt.status) !== 1) {
-            throw new Error("settlement token transfer reverted");
+          if (asset === ethers.constants.AddressZero) {
+            const tx = await signer.sendTransaction({
+              to: ethers.utils.getAddress(payee),
+              value: unsettled,
+              gasLimit: 21000
+            });
+            const receipt = await tx.wait(1);
+            if (!receipt || Number(receipt.status) !== 1) {
+              failSettlement(500, "SCP_011_SETTLEMENT_FAILED", "settlement transaction reverted");
+            }
+            txHash = tx.hash;
+          } else {
+            const erc20 = new ethers.Contract(
+              asset,
+              ["function transfer(address to, uint256 amount) returns (bool)"],
+              signer
+            );
+            const tx = await erc20.transfer(ethers.utils.getAddress(payee), unsettled, { gasLimit: 60000 });
+            const receipt = await tx.wait(1);
+            if (!receipt || Number(receipt.status) !== 1) {
+              failSettlement(500, "SCP_011_SETTLEMENT_FAILED", "settlement token transfer reverted");
+            }
+            txHash = tx.hash;
           }
-          txHash = tx.hash;
         }
       } catch (err) {
         await store.tx((s) => {
@@ -1179,12 +1255,16 @@ async function handleRequest(req, res) {
               payee,
               asset,
               status: "failed",
+              mode: settlementMode,
+              code: err.errorCode || "SCP_011_SETTLEMENT_FAILED",
               error: err.message || "tx failed",
               failedAt: now()
             };
           }
         });
-        return sendJson(res, 500, makeError("SCP_011_SETTLEMENT_FAILED", err.message || "tx failed", true));
+        const statusCode = Number(err.httpStatus) || 500;
+        const errorCode = err.errorCode || "SCP_011_SETTLEMENT_FAILED";
+        return sendJson(res, statusCode, makeError(errorCode, err.message || "tx failed", statusCode >= 500));
       }
 
       // Mark entries as settled
@@ -1206,11 +1286,21 @@ async function handleRequest(req, res) {
             payee,
             asset,
             status: "completed",
+            mode: settlementMode,
             amount: unsettled.toString(),
             txHash,
             settledCount: unsettledEntries.length,
             completedAt: now()
           };
+        }
+        if (settlementMode === "cooperative_close") {
+          const hc = s.hubChannels && s.hubChannels[payee];
+          if (hc && hc.channelId === closeChannelId) {
+            hc.status = "closed";
+            hc.closedAt = now();
+            hc.closeTx = txHash;
+            hc.sigB = closeSigB;
+          }
         }
       });
 
@@ -1218,8 +1308,10 @@ async function handleRequest(req, res) {
         payee,
         amount: unsettled.toString(),
         asset,
+        mode: settlementMode,
         txHash,
         settledCount: unsettledEntries.length,
+        ...(settlementMode === "cooperative_close" ? { channelId: closeChannelId } : {}),
         ...(idemScopeKey ? { settlementId } : {})
       });
     }
