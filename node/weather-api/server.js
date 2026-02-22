@@ -177,6 +177,25 @@ function normalizePathPaymentModes(raw, context) {
   return out;
 }
 
+function normalizePathPayOnceTtls(raw, context) {
+  if (!raw) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`${context} must be an object like {"/path":3600}`);
+  }
+  const out = {};
+  for (const [pathname, ttlRaw] of Object.entries(raw)) {
+    if (!pathname || pathname[0] !== "/") {
+      throw new Error(`${context} has invalid path "${pathname}"; expected a leading "/"`);
+    }
+    const ttlSec = Number(ttlRaw);
+    if (!Number.isInteger(ttlSec) || ttlSec <= 0) {
+      throw new Error(`${context}.${pathname} must be a positive integer number of seconds`);
+    }
+    out[pathname] = ttlSec;
+  }
+  return out;
+}
+
 // Parse offer config from OFFERS_FILE only.
 // OFFERS_FILE must be JSON object with shape:
 // {
@@ -187,6 +206,9 @@ function normalizePathPaymentModes(raw, context) {
 //   "pathPaymentModes": {
 //     "/weather": "per_request",
 //     "/boop": "pay_once"
+//   },
+//   "pathPayOnceTtls": {
+//     "/boop": 3600
 //   }
 // }
 function parseOffers() {
@@ -244,12 +266,14 @@ function parseOffers() {
   if (!offers.length) throw new Error("OFFERS_FILE.offers must include at least one offer block");
   const pathAssetPrices = normalizePathAssetPrices(parsed.pathPrices, "OFFERS_FILE.pathPrices");
   const pathPaymentModes = normalizePathPaymentModes(parsed.pathPaymentModes, "OFFERS_FILE.pathPaymentModes");
-  return { nets: offers, pathAssetPrices, pathPaymentModes };
+  const pathPayOnceTtls = normalizePathPayOnceTtls(parsed.pathPayOnceTtls, "OFFERS_FILE.pathPayOnceTtls");
+  return { nets: offers, pathAssetPrices, pathPaymentModes, pathPayOnceTtls };
 }
 const OFFER_CONFIG = parseOffers();
 const NETS = OFFER_CONFIG.nets;
 const PATH_ASSET_PRICES = OFFER_CONFIG.pathAssetPrices;
 const PATH_PAYMENT_MODES = OFFER_CONFIG.pathPaymentModes;
+const PATH_PAY_ONCE_TTLS = OFFER_CONFIG.pathPayOnceTtls;
 
 const PAYEE_KEY = process.env.PAYEE_PRIVATE_KEY;
 if (!PAYEE_KEY) {
@@ -374,11 +398,12 @@ function getAccessGrant(req, pathname, ctx) {
 
 function issueAccessGrant(res, pathname, ctx) {
   const token = randomId("acc");
-  const expiresAt = now() + ctx.payOnceTtlSec;
+  const ttlSec = ctx.pathPayOnceTtls[pathname] || ctx.payOnceTtlSec;
+  const expiresAt = now() + ttlSec;
   ctx.accessGrants.set(token, { path: pathname, expiresAt });
   res.setHeader(
     "Set-Cookie",
-    `scp_access=${encodeURIComponent(token)}; Max-Age=${ctx.payOnceTtlSec}; Path=/; HttpOnly; SameSite=Lax`
+    `scp_access=${encodeURIComponent(token)}; Max-Age=${ttlSec}; Path=/; HttpOnly; SameSite=Lax`
   );
   return { mode: "pay_once", token, expiresAt };
 }
@@ -513,7 +538,8 @@ async function handle(req, res, ctx) {
       ok: true,
       payee: PAYEE_ADDRESS,
       paymentMode: ctx.paymentMode,
-      pathPaymentModes: ctx.pathPaymentModes
+      pathPaymentModes: ctx.pathPaymentModes,
+      pathPayOnceTtls: ctx.pathPayOnceTtls
     });
   }
 
@@ -605,11 +631,16 @@ function createWeatherServer(options = {}) {
     options.pathPaymentModes || PATH_PAYMENT_MODES,
     "pathPaymentModes"
   );
+  const pathPayOnceTtls = normalizePathPayOnceTtls(
+    options.pathPayOnceTtls || PATH_PAY_ONCE_TTLS,
+    "pathPayOnceTtls"
+  );
   const ctx = {
     invoices: new Map(),
     accessGrants: new Map(),
     paymentMode: mode,
     pathPaymentModes,
+    pathPayOnceTtls,
     payOnceTtlSec,
     directChannels: new Map(),
     hubAddressCache: new Map(),
@@ -644,6 +675,10 @@ if (require.main === module) {
     const modeEntries = Object.entries(PATH_PAYMENT_MODES);
     if (modeEntries.length) {
       console.log(`  path payment modes: ${modeEntries.map(([p, m]) => `${p}=${m}`).join(", ")}`);
+    }
+    const ttlEntries = Object.entries(PATH_PAY_ONCE_TTLS);
+    if (ttlEntries.length) {
+      console.log(`  path pay-once ttls: ${ttlEntries.map(([p, t]) => `${p}=${t}s`).join(", ")}`);
     }
     console.log(`  payment mode: ${PAYMENT_MODE}`);
   });

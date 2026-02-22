@@ -35,5 +35,9 @@
     "/weather": "per_request",
     "/meow": "pay_once",
     "/boop": "pay_once"
+  },
+  "pathPayOnceTtls": {
+    "/meow": 86400,
+    "/boop": 3600
   }
 }

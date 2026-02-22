@@ -151,11 +151,13 @@ Use this profile for real usage (not local demo).
     Example: `"/weather": { "usdc": "0.50", "eth": "0.005" }` means `/weather` costs either `0.50 USDC` or `0.005 ETH`.
   - Optional `pathPaymentModes` in `OFFERS_FILE` sets per-path payment behavior (`per_request` or `pay_once`).
     Example: `"/meow": "pay_once"` means first successful payment unlocks `/meow` until TTL.
+  - Optional `pathPayOnceTtls` in `OFFERS_FILE` sets per-path `pay_once` TTL seconds.
+    Example: `"/boop": 3600` means `/boop` unlock lasts 1 hour after payment.
   - `HUB_URL` and `HUB_NAME` only if offering hub route
   - `PAYMENT_MODE`:
     - `per_request` (default): payer includes payment proof on each paid request.
     - `pay_once`: payer pays once, then reuses returned access token/cookie for that path.
-  - `PAY_ONCE_TTL_SEC` (default `86400`) access grant lifetime when `PAYMENT_MODE=pay_once`.
+  - `PAY_ONCE_TTL_SEC` (default `86400`) global pay-once TTL fallback when a path is not set in `pathPayOnceTtls`.
 
 ### Hub (Only If You Operate Hub Infrastructure)
 
@@ -473,6 +475,7 @@ OFFERS_FILE=./offers.example.json
 - accepted networks/assets/modes (`offers[]`)
 - per-path pricing (`pathPrices`)
 - optional per-path payment behavior (`pathPaymentModes`)
+- optional per-path pay-once TTL seconds (`pathPayOnceTtls`)
 
 Example:
 
@@ -497,6 +500,10 @@ Example:
     "/weather": "per_request",
     "/boop": "pay_once",
     "/meow": "pay_once"
+  },
+  "pathPayOnceTtls": {
+    "/boop": 3600,
+    "/meow": 86400
   }
 }
 ```
