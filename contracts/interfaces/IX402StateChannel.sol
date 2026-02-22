@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-pragma abicoder v2;
+pragma solidity 0.8.28;
 
 interface IX402StateChannel {
     struct ChannelState {
@@ -107,5 +106,5 @@ interface IX402StateChannel {
         view
         returns (bytes32[] memory);
 
-    function hashState(ChannelState calldata st) external pure returns (bytes32);
+    function hashState(ChannelState calldata st) external view returns (bytes32);
 }

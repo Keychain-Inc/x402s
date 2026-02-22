@@ -6,34 +6,78 @@ const os = require("os");
 const path = require("path");
 const cluster = require("cluster");
 const { ethers } = require("ethers");
-const { Storage } = require("./storage");
+const { createStorage } = require("./storage");
 const { buildValidators, validationMessage } = require("./validator");
 const { signTicketDraft } = require("./ticket");
-const { signChannelState, hashChannelState } = require("./state-signing");
+const { buildAgentSummary, buildAgentReceipts } = require("./payment-views");
+const {
+  signChannelState,
+  hashChannelState,
+  recoverChannelStateSigner,
+  setDomainDefaults
+} = require("./state-signing");
+const { WebhookManager, EVENT } = require("./webhooks");
+const { resolveNetwork, resolveAsset, resolveContract } = require("../scp-common/networks");
+const { recoverPayeeAuthSigner } = require("../scp-common/payee-auth");
 
 const PORT = Number(process.env.PORT || 4021);
 const HOST = process.env.HOST || "127.0.0.1";
 const HUB_NAME = process.env.HUB_NAME || "pay.eth";
-const CHAIN_ID = Number(process.env.CHAIN_ID || 8453);
+
+// NETWORK=sepolia | base | mainnet  (or CHAIN_ID=11155111 for back-compat)
+let CHAIN_ID;
+const netInput = process.env.NETWORK;
+if (netInput) {
+  const net = netInput.startsWith("eip155:")
+    ? { chainId: Number(netInput.split(":")[1]) }
+    : resolveNetwork(netInput);
+  CHAIN_ID = net.chainId;
+} else {
+  CHAIN_ID = Number(process.env.CHAIN_ID || 11155111);
+}
+if (!Number.isInteger(CHAIN_ID) || CHAIN_ID <= 0) {
+  console.error("FATAL: invalid chain id. Set NETWORK (recommended) or CHAIN_ID.");
+  process.exit(1);
+}
+
 const SIG_FORMAT = "eth_sign";
-const PRIVATE_KEY =
-  process.env.HUB_PRIVATE_KEY ||
-  "0x59c6995e998f97a5a0044976f5d81f39bcb8c4f7f2d1b6c2c9f6f2c7d4b6f001";
+const PRIVATE_KEY = process.env.HUB_PRIVATE_KEY;
+if (!PRIVATE_KEY) {
+  console.error("FATAL: HUB_PRIVATE_KEY env var is required. Never use hardcoded keys.");
+  process.exit(1);
+}
 const wallet = new ethers.Wallet(PRIVATE_KEY);
 const HUB_ADDRESS = wallet.address;
-const DEFAULT_ASSET =
-  process.env.DEFAULT_ASSET || "0x833589fCD6eDb6E08f4c7C32D4f71b54bDa02913";
+
+// DEFAULT_ASSET: resolve by name or use raw address
+let DEFAULT_ASSET = process.env.DEFAULT_ASSET;
+if (!DEFAULT_ASSET) {
+  try { DEFAULT_ASSET = resolveAsset(CHAIN_ID, "usdc").address; }
+  catch (_) { DEFAULT_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bDa02913"; }
+}
 const FEE_BASE = BigInt(process.env.FEE_BASE || "10");
 const FEE_BPS = BigInt(process.env.FEE_BPS || "30");
 const GAS_SURCHARGE = BigInt(process.env.GAS_SURCHARGE || "0");
 const RPC_URL = process.env.RPC_URL || "";
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS || "";
+const REDIS_URL = process.env.REDIS_URL || "";
+const HUB_ADMIN_TOKEN = process.env.HUB_ADMIN_TOKEN || "";
+const PAYEE_AUTH_MAX_SKEW_SEC = Number(process.env.PAYEE_AUTH_MAX_SKEW_SEC || 300);
 const CHANNEL_ABI = [
   "function openChannel(address hub, address asset, uint256 amount, uint64 challengePeriodSec, uint64 channelExpiry, bytes32 salt) external payable returns (bytes32 channelId)",
   "event ChannelOpened(bytes32 indexed channelId, address indexed participantA, address indexed participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry)"
 ];
 const STORE_PATH = process.env.STORE_PATH || path.resolve(__dirname, "./data/store.json");
 const WORKERS = Number(process.env.HUB_WORKERS || 0);
+const DOMAIN_CONTRACT = (() => {
+  const raw = CONTRACT_ADDRESS || resolveContract(CHAIN_ID) || ethers.constants.AddressZero;
+  try {
+    return ethers.utils.getAddress(raw);
+  } catch (_e) {
+    return ethers.constants.AddressZero;
+  }
+})();
+setDomainDefaults(CHAIN_ID, DOMAIN_CONTRACT);
 
 // Provider + funded wallet for on-chain settlement (lazy init)
 let hubSigner = null;
@@ -45,8 +89,9 @@ function getHubSigner() {
   return hubSigner;
 }
 
-const store = new Storage(STORE_PATH);
+const store = createStorage(REDIS_URL ? { redisUrl: REDIS_URL } : STORE_PATH);
 const validate = buildValidators();
+const webhooks = new WebhookManager(store);
 
 function sendJson(res, code, payload) {
   const body = JSON.stringify(payload);
@@ -59,22 +104,37 @@ function sendJson(res, code, payload) {
 
 function parseBody(req) {
   return new Promise((resolve, reject) => {
+    let settled = false;
     let data = "";
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+    const succeed = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     req.on("data", (chunk) => {
       data += chunk.toString("utf8");
       if (data.length > 1024 * 1024) {
-        reject(new Error("payload too large"));
+        const err = new Error("payload too large");
+        err.statusCode = 413;
+        fail(err);
+        req.destroy();
       }
     });
     req.on("end", () => {
-      if (!data) return resolve({});
+      if (!data) return succeed({});
       try {
-        resolve(JSON.parse(data));
+        succeed(JSON.parse(data));
       } catch (err) {
-        reject(err);
+        err.statusCode = 400;
+        fail(err);
       }
     });
-    req.on("error", reject);
+    req.on("error", fail);
   });
 }
 
@@ -110,6 +170,20 @@ function policyHash(obj) {
   return ethers.utils.keccak256(Buffer.from(enc, "utf8"));
 }
 
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const k of Object.keys(value).sort()) out[k] = canonicalize(value[k]);
+    return out;
+  }
+  return value;
+}
+
+function stableStringify(value) {
+  return JSON.stringify(canonicalize(value));
+}
+
 function now() {
   return Math.floor(Date.now() / 1000);
 }
@@ -118,6 +192,92 @@ const ZERO32 = "0x" + "0".repeat(64);
 
 function makeError(code, message, retryable = false) {
   return { errorCode: code, message, retryable };
+}
+
+function parseUint(v, fieldName) {
+  try {
+    return BigInt(v);
+  } catch (_e) {
+    throw new Error(`invalid ${fieldName}`);
+  }
+}
+
+function ensureIndexBucket(state, key) {
+  if (!state[key] || typeof state[key] !== "object") state[key] = {};
+  return state[key];
+}
+
+function indexIssuedPayment(state, payment) {
+  const paymentId = payment.paymentId;
+  const ticketId = payment.ticketId;
+  const channelId = payment.channelId;
+  const payee = String(payment.payee || "").toLowerCase();
+  if (!paymentId || !ticketId || !channelId || !payee) return;
+
+  const byTicket = ensureIndexBucket(state, "paymentsByTicketId");
+  byTicket[ticketId] = paymentId;
+
+  const byChannel = ensureIndexBucket(state, "paymentIdsByChannel");
+  if (!byChannel[channelId] || typeof byChannel[channelId] !== "object") byChannel[channelId] = {};
+  byChannel[channelId][paymentId] = 1;
+
+  const byPayee = ensureIndexBucket(state, "paymentIdsByPayee");
+  if (!byPayee[payee] || typeof byPayee[payee] !== "object") byPayee[payee] = {};
+  byPayee[payee][paymentId] = 1;
+}
+
+function requireAdminAuth(req, res) {
+  if (!HUB_ADMIN_TOKEN) return true;
+  const hdrToken = typeof req.headers["x-scp-admin-token"] === "string"
+    ? req.headers["x-scp-admin-token"]
+    : "";
+  const authz = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+  const bearer = authz.toLowerCase().startsWith("bearer ") ? authz.slice(7).trim() : "";
+  const token = hdrToken || bearer;
+  if (!token || token !== HUB_ADMIN_TOKEN) {
+    sendJson(res, 401, makeError("SCP_012_UNAUTHORIZED", "admin auth required"));
+    return false;
+  }
+  return true;
+}
+
+function requirePayeeAuth(req, res, pathname, payee, body) {
+  const sig = typeof req.headers["x-scp-payee-signature"] === "string"
+    ? req.headers["x-scp-payee-signature"]
+    : "";
+  const tsRaw = req.headers["x-scp-payee-timestamp"];
+  const ts = Number(tsRaw);
+  if (!sig) {
+    sendJson(res, 401, makeError("SCP_012_UNAUTHORIZED", "missing x-scp-payee-signature"));
+    return false;
+  }
+  if (!Number.isInteger(ts)) {
+    sendJson(res, 401, makeError("SCP_012_UNAUTHORIZED", "invalid x-scp-payee-timestamp"));
+    return false;
+  }
+  if (Math.abs(now() - ts) > PAYEE_AUTH_MAX_SKEW_SEC) {
+    sendJson(res, 401, makeError("SCP_012_UNAUTHORIZED", "stale payee auth timestamp"));
+    return false;
+  }
+  let recovered;
+  try {
+    recovered = recoverPayeeAuthSigner({
+      method: req.method,
+      path: pathname,
+      payee,
+      timestamp: ts,
+      body,
+      signature: sig
+    });
+  } catch (_e) {
+    sendJson(res, 401, makeError("SCP_012_UNAUTHORIZED", "invalid payee auth signature"));
+    return false;
+  }
+  if (String(recovered || "").toLowerCase() !== String(payee || "").toLowerCase()) {
+    sendJson(res, 401, makeError("SCP_012_UNAUTHORIZED", "payee signature mismatch"));
+    return false;
+  }
+  return true;
 }
 
 async function handleRequest(req, res) {
@@ -159,6 +319,14 @@ async function handleRequest(req, res) {
           res,
           400,
           makeError("SCP_009_POLICY_VIOLATION", "quoteExpiry must be future unix ts")
+        );
+      }
+      const existingPayment = await store.getPayment(body.paymentId);
+      if (existingPayment) {
+        return sendJson(
+          res,
+          409,
+          makeError("SCP_009_POLICY_VIOLATION", "paymentId already exists")
         );
       }
 
@@ -210,6 +378,7 @@ async function handleRequest(req, res) {
         s.quotes[`${body.invoiceId}:${body.paymentId}`] = {
           quote,
           channelId: body.channelId,
+          contextHash: body.contextHash || ZERO32,
           createdAt: now()
         };
         s.payments[body.paymentId] = {
@@ -231,16 +400,74 @@ async function handleRequest(req, res) {
         );
       }
 
-      const quote = body.quote;
-      const key = `${quote.invoiceId}:${quote.paymentId}`;
+      const submittedQuote = body.quote;
+      const key = `${submittedQuote.invoiceId}:${submittedQuote.paymentId}`;
       const stored = await store.getQuote(key);
       if (!stored) return sendJson(res, 409, makeError("SCP_002_QUOTE_EXPIRED", "quote not found"));
+      const quote = stored.quote;
+      if (stableStringify(submittedQuote) !== stableStringify(quote)) {
+        return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "quote mismatch"));
+      }
 
       if (quote.expiry < now()) {
         return sendJson(res, 409, makeError("SCP_002_QUOTE_EXPIRED", "quote expired"));
       }
       if (body.channelState.channelId !== stored.channelId) {
         return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "channel mismatch"));
+      }
+      if (stored.contextHash && body.channelState.contextHash !== stored.contextHash) {
+        return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "context hash mismatch"));
+      }
+      if (body.channelState.stateExpiry <= now()) {
+        return sendJson(res, 409, makeError("SCP_006_STATE_EXPIRED", "state expired"));
+      }
+      let recoveredA;
+      try {
+        recoveredA = recoverChannelStateSigner(body.channelState, body.sigA);
+      } catch (_e) {
+        return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "invalid sigA"));
+      }
+
+      const existingChannel = await store.getChannel(body.channelState.channelId);
+      let stateBalA;
+      let stateBalB;
+      let stateTotal;
+      let quoteDebit;
+      try {
+        stateBalA = parseUint(body.channelState.balA, "balA");
+        stateBalB = parseUint(body.channelState.balB, "balB");
+        stateTotal = stateBalA + stateBalB;
+        quoteDebit = parseUint(quote.totalDebit, "totalDebit");
+      } catch (e) {
+        return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", e.message));
+      }
+
+      if (existingChannel && existingChannel.latestState) {
+        if (Number(body.channelState.stateNonce) !== Number(existingChannel.latestNonce) + 1) {
+          return sendJson(res, 409, makeError("SCP_005_NONCE_CONFLICT", "stateNonce must increase by 1"));
+        }
+        if (String(existingChannel.participantA || "").toLowerCase() !== recoveredA.toLowerCase()) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "participantA mismatch"));
+        }
+        let prevBalA;
+        let prevBalB;
+        try {
+          prevBalA = parseUint(existingChannel.latestState.balA, "prev balA");
+          prevBalB = parseUint(existingChannel.latestState.balB, "prev balB");
+        } catch (e) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", e.message));
+        }
+        const prevTotal = prevBalA + prevBalB;
+        if (stateTotal !== prevTotal) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "channel balance invariant violated"));
+        }
+        if (prevBalA - stateBalA !== quoteDebit || stateBalB - prevBalB !== quoteDebit) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "state delta must equal quote totalDebit"));
+        }
+      } else {
+        if (Number(body.channelState.stateNonce) < 1) {
+          return sendJson(res, 409, makeError("SCP_005_NONCE_CONFLICT", "first stateNonce must be >= 1"));
+        }
       }
 
       const ticket = { ...quote.ticketDraft, sig: await signTicketDraft(quote.ticketDraft, wallet) };
@@ -260,17 +487,31 @@ async function handleRequest(req, res) {
       };
 
       await store.tx((s) => {
-        s.payments[quote.paymentId] = {
+        // C6: Mark quote as consumed to prevent reuse
+        delete s.quotes[key];
+
+        const issuedPayment = {
           paymentId: quote.paymentId,
           status: "issued",
+          createdAt: now(),
+          invoiceId: quote.invoiceId,
           ticketId: ticket.ticketId,
-          stateNonce: body.channelState.stateNonce
+          stateNonce: body.channelState.stateNonce,
+          channelId: body.channelState.channelId,
+          payee: ticket.payee,
+          asset: ticket.asset,
+          amount: ticket.amount,
+          fee: ticket.feeCharged,
+          totalDebit: ticket.totalDebit
         };
+        s.payments[quote.paymentId] = issuedPayment;
+        indexIssuedPayment(s, issuedPayment);
         s.channels[body.channelState.channelId] = {
           channelId: body.channelState.channelId,
           latestNonce: body.channelState.stateNonce,
           status: "open",
           latestState: body.channelState,
+          participantA: recoveredA,
           sigA: body.sigA,
           sigB
         };
@@ -296,6 +537,9 @@ async function handleRequest(req, res) {
       const hc = await store.getHubChannel(payeeKey);
       if (hc && hc.channelId) {
         const paymentAmount = BigInt(ticket.amount);
+        if (BigInt(hc.balA) < paymentAmount) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "hub-payee channel balance insufficient"));
+        }
         const newBalA = (BigInt(hc.balA) - paymentAmount).toString();
         const newBalH = (BigInt(hc.balB) + paymentAmount).toString();
         const newNonce = hc.nonce + 1;
@@ -318,6 +562,27 @@ async function handleRequest(req, res) {
         hubChannelAck = { channelId: hc.channelId, stateNonce: newNonce, balB: newBalH, sigA: hcSigA };
       }
 
+      webhooks.emit(EVENT.PAYMENT_RECEIVED, {
+        channelId: body.channelState.channelId,
+        paymentId: quote.paymentId,
+        ticketId: ticket.ticketId,
+        payee: ticket.payee,
+        amount: ticket.amount,
+        asset: ticket.asset
+      });
+
+      // Emit balance.low when agent's remaining balance drops below 10% of total
+      const balA = BigInt(body.channelState.balA);
+      const totalBal = balA + BigInt(body.channelState.balB);
+      if (totalBal > 0n && balA * 10n < totalBal) {
+        webhooks.emit(EVENT.BALANCE_LOW, {
+          channelId: body.channelState.channelId,
+          balA: balA.toString(),
+          totalBalance: totalBal.toString(),
+          pctRemaining: Number((balA * 100n) / totalBal)
+        });
+      }
+
       return sendJson(res, 200, {
         ...ticket,
         channelAck,
@@ -335,11 +600,39 @@ async function handleRequest(req, res) {
         );
       }
 
-      const stateNonce = Math.floor(Math.random() * 1000000) + 1;
+      // C4: Validate ticket exists and refund amount doesn't exceed original
+      const ticketPayment = await store.getPaymentByTicketId(body.ticketId);
+      if (!ticketPayment) {
+        return sendJson(res, 404, makeError("SCP_007_CHANNEL_NOT_FOUND", "ticket not found or already refunded"));
+      }
+      if (ticketPayment.status !== "issued") {
+        return sendJson(res, 404, makeError("SCP_007_CHANNEL_NOT_FOUND", "ticket not found or already refunded"));
+      }
+      if (BigInt(body.refundAmount) > BigInt(ticketPayment.amount)) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "refund exceeds original amount"));
+      }
+
+      // Use sequential nonce from channel state, not random
+      const ch = await store.getChannel(ticketPayment.channelId);
+      const stateNonce = ch ? Number(ch.latestNonce) + 1 : 1;
+      const receiptId = randomId("rfd");
+
+      await store.tx((s) => {
+        s.payments[ticketPayment.paymentId].status = "refunded";
+      });
+
+      webhooks.emit(EVENT.PAYMENT_REFUNDED, {
+        ticketId: body.ticketId,
+        receiptId,
+        amount: body.refundAmount,
+        stateNonce
+      });
+
       return sendJson(res, 200, {
         ticketId: body.ticketId,
+        amount: body.refundAmount,
         stateNonce,
-        receiptId: randomId("rfd")
+        receiptId
       });
     }
 
@@ -398,43 +691,38 @@ async function handleRequest(req, res) {
       if (!ch) {
         return sendJson(res, 200, { channelId, payments: 0, totalSpent: "0", totalFees: "0", latestNonce: 0 });
       }
-      // Scan payments for this channel
-      const allPayments = [];
-      let totalSpent = 0n;
-      let totalFees = 0n;
-      const state = store.state || {};
-      const payments = state.payments || {};
-      for (const [pid, p] of Object.entries(payments)) {
-        if (p.stateNonce && p.status === "issued") {
-          // Find matching quote
-          const quotes = state.quotes || {};
-          for (const [, q] of Object.entries(quotes)) {
-            if (q.channelId === channelId && q.quote && q.quote.paymentId === pid) {
-              const amount = BigInt(q.quote.ticketDraft.amount);
-              const fee = BigInt(q.quote.ticketDraft.feeCharged);
-              totalSpent += amount;
-              totalFees += fee;
-              allPayments.push({
-                paymentId: pid,
-                amount: amount.toString(),
-                fee: fee.toString(),
-                payee: q.quote.ticketDraft.payee,
-                ticketId: p.ticketId
-              });
-              break;
-            }
-          }
-        }
+      const payments = await store.listPaymentsByChannel(channelId);
+      return sendJson(res, 200, buildAgentSummary(channelId, ch.latestNonce, payments));
+    }
+
+    if (req.method === "GET" && pathname === "/v1/agent/receipts") {
+      const parsed = url.parse(req.url, true);
+      const channelId = (parsed.query && parsed.query.channelId) || null;
+      const payeeFilter = String((parsed.query && parsed.query.payee) || "").toLowerCase();
+      const since = Number((parsed.query && parsed.query.since) || 0);
+      const limitRaw = Number((parsed.query && parsed.query.limit) || 100);
+      const limit = Math.min(Math.max(limitRaw, 1), 1000);
+      if (channelId && !isHex32(channelId)) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid channelId"));
       }
-      return sendJson(res, 200, {
+      if (payeeFilter && !isHexAddress(payeeFilter)) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid payee"));
+      }
+
+      let payments;
+      if (channelId) {
+        payments = await store.listPaymentsByChannel(channelId);
+      } else if (payeeFilter) {
+        payments = await store.listPaymentsByPayee(payeeFilter);
+      } else {
+        payments = Object.values(await store.listPayments());
+      }
+      return sendJson(res, 200, buildAgentReceipts(payments, {
+        since,
+        limit,
         channelId,
-        latestNonce: ch.latestNonce,
-        payments: allPayments.length,
-        totalSpent: totalSpent.toString(),
-        totalFees: totalFees.toString(),
-        totalDebit: (totalSpent + totalFees).toString(),
-        items: allPayments
-      });
+        payee: payeeFilter
+      }));
     }
 
     if (req.method === "GET" && pathname === "/v1/payee/balance") {
@@ -459,6 +747,37 @@ async function handleRequest(req, res) {
       });
     }
 
+    if (req.method === "GET" && pathname === "/v1/payee/receipts") {
+      const parsed = url.parse(req.url, true);
+      const payee = String((parsed.query && parsed.query.payee) || "").toLowerCase();
+      const since = Number((parsed.query && parsed.query.since) || 0);
+      const statusFilter = String((parsed.query && parsed.query.status) || "").toLowerCase();
+      const limitRaw = Number((parsed.query && parsed.query.limit) || 100);
+      const limit = Math.min(Math.max(limitRaw, 1), 1000);
+      if (!isHexAddress(payee)) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "payee must be 0x address"));
+      }
+      if (statusFilter && statusFilter !== "issued" && statusFilter !== "settled") {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "status must be issued|settled"));
+      }
+
+      const ledger = await store.getLedger(payee);
+      const filtered = ledger
+        .filter((x) => Number(x.createdAt || 0) > since)
+        .filter((x) => !statusFilter || String(x.status || "").toLowerCase() === statusFilter)
+        .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0))
+        .slice(0, limit);
+      const nextCursor = filtered.length ? Number(filtered[filtered.length - 1].createdAt || since) : since;
+
+      return sendJson(res, 200, {
+        payee,
+        since,
+        count: filtered.length,
+        nextCursor,
+        items: filtered
+      });
+    }
+
     // --- Hub↔Payee channel management ---
 
     if (req.method === "POST" && pathname === "/v1/hub/open-payee-channel") {
@@ -467,6 +786,7 @@ async function handleRequest(req, res) {
       if (!isHexAddress(payee)) {
         return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "payee must be 0x address"));
       }
+      if (!requirePayeeAuth(req, res, pathname, payee, body)) return;
       const signer = getHubSigner();
       if (!signer || !CONTRACT_ADDRESS) {
         return sendJson(res, 503, makeError("SCP_010_SETTLEMENT_UNAVAILABLE", "hub has no on-chain provider or contract (set RPC_URL, CONTRACT_ADDRESS)", true));
@@ -518,6 +838,7 @@ async function handleRequest(req, res) {
       if (!isHexAddress(payee) || !body.channelId) {
         return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "payee and channelId required"));
       }
+      if (!requirePayeeAuth(req, res, pathname, payee, body)) return;
       const existing = await store.getHubChannel(payee);
       if (existing && existing.channelId) {
         return sendJson(res, 200, { message: "already registered", ...existing });
@@ -566,22 +887,31 @@ async function handleRequest(req, res) {
       if (!isHexAddress(payee)) {
         return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "payee must be 0x address"));
       }
+      if (!requirePayeeAuth(req, res, pathname, payee, body)) return;
       const signer = getHubSigner();
       if (!signer) {
         return sendJson(res, 503, makeError("SCP_010_SETTLEMENT_UNAVAILABLE", "hub has no on-chain provider (set RPC_URL)", true));
       }
       const asset = String(body.asset || ethers.constants.AddressZero);
 
-      // Sum unsettled amounts
-      const ledger = await store.getLedger(payee);
+      // Atomically reserve unsettled entries to prevent concurrent double-settlement.
       let unsettled = 0n;
       const unsettledEntries = [];
-      for (const entry of ledger) {
-        if (entry.status === "issued") {
-          unsettled += BigInt(entry.amount);
-          unsettledEntries.push(entry);
+      const settlementId = randomId("stl");
+      await store.tx((s) => {
+        const entries = s.payeeLedger[payee] || [];
+        for (const entry of entries) {
+          if (entry.status === "issued") {
+            unsettled += BigInt(entry.amount);
+            entry.status = "settling";
+            entry.settlementId = settlementId;
+            unsettledEntries.push({
+              paymentId: entry.paymentId,
+              amount: entry.amount
+            });
+          }
         }
-      }
+      });
       if (unsettled === 0n) {
         return sendJson(res, 200, { payee, amount: "0", message: "nothing to settle" });
       }
@@ -608,6 +938,15 @@ async function handleRequest(req, res) {
           txHash = tx.hash;
         }
       } catch (err) {
+        await store.tx((s) => {
+          const entries = s.payeeLedger[payee] || [];
+          for (const entry of entries) {
+            if (entry.status === "settling" && entry.settlementId === settlementId) {
+              entry.status = "issued";
+              delete entry.settlementId;
+            }
+          }
+        });
         return sendJson(res, 500, makeError("SCP_011_SETTLEMENT_FAILED", err.message || "tx failed", true));
       }
 
@@ -615,10 +954,11 @@ async function handleRequest(req, res) {
       await store.tx((s) => {
         const entries = s.payeeLedger[payee] || [];
         for (const entry of entries) {
-          if (entry.status === "issued") {
+          if (entry.status === "settling" && entry.settlementId === settlementId) {
             entry.status = "settled";
             entry.settleTx = txHash;
             entry.settledAt = now();
+            delete entry.settlementId;
           }
         }
       });
@@ -632,8 +972,72 @@ async function handleRequest(req, res) {
       });
     }
 
+    // --- Webhooks ---
+
+    if (req.method === "POST" && pathname === "/v1/webhooks") {
+      if (!requireAdminAuth(req, res)) return;
+      const body = await parseBody(req);
+      const result = webhooks.register({
+        url: body.url,
+        events: body.events,
+        channelId: body.channelId,
+        secret: body.secret
+      });
+      if (result.error) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", result.error));
+      return sendJson(res, 201, result);
+    }
+
+    if (pathname.startsWith("/v1/webhooks/")) {
+      if (!requireAdminAuth(req, res)) return;
+      const webhookId = pathname.split("/").pop();
+      if (req.method === "GET") {
+        const hook = webhooks.get(webhookId);
+        if (!hook) return sendJson(res, 404, makeError("SCP_009_POLICY_VIOLATION", "webhook not found"));
+        return sendJson(res, 200, hook);
+      }
+      if (req.method === "PATCH") {
+        const body = await parseBody(req);
+        const existing = webhooks.get(webhookId);
+        if (!existing) return sendJson(res, 404, makeError("SCP_009_POLICY_VIOLATION", "webhook not found"));
+        const hook = webhooks.update(webhookId, body);
+        if (!hook) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid webhook update"));
+        return sendJson(res, 200, hook);
+      }
+      if (req.method === "DELETE") {
+        const removed = webhooks.remove(webhookId);
+        if (!removed) return sendJson(res, 404, makeError("SCP_009_POLICY_VIOLATION", "webhook not found"));
+        return sendJson(res, 200, { deleted: true });
+      }
+    }
+
+    if (req.method === "POST" && pathname === "/v1/events/emit") {
+      if (!requireAdminAuth(req, res)) return;
+      const body = await parseBody(req);
+      const validEvents = Object.values(EVENT);
+      if (!body.event || !validEvents.includes(body.event)) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid event type"));
+      }
+      const entry = webhooks.emit(body.event, body.data || {});
+      return sendJson(res, 200, { ok: true, seq: entry.seq });
+    }
+
+    if (req.method === "GET" && pathname === "/v1/events") {
+      if (!requireAdminAuth(req, res)) return;
+      const parsed = url.parse(req.url, true);
+      const since = Number(parsed.query.since || 0);
+      const channelId = parsed.query.channelId || parsed.query.channel || null;
+      const limit = Number(parsed.query.limit || 50);
+      return sendJson(res, 200, webhooks.poll({ since, channelId, limit }));
+    }
+
     return sendJson(res, 404, makeError("SCP_009_POLICY_VIOLATION", "route not found"));
   } catch (err) {
+    if (err && err.statusCode === 413) {
+      return sendJson(res, 413, makeError("SCP_009_POLICY_VIOLATION", "payload too large"));
+    }
+    if (err && err.statusCode === 400) {
+      return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", err.message || "invalid request body"));
+    }
     return sendJson(res, 500, makeError("SCP_009_POLICY_VIOLATION", err.message || "internal error", true));
   }
 }
@@ -667,6 +1071,20 @@ function startCluster(numWorkers) {
 
 if (require.main === module) {
   if (WORKERS > 1 || process.env.HUB_CLUSTER === "1") {
+    if (!REDIS_URL && STORE_PATH === ":memory:") {
+      console.error(
+        "FATAL: Cluster mode requires shared persistent storage. STORE_PATH=:memory: is process-local.\n" +
+        "Set STORE_PATH to a filesystem path (or use a shared backend) before enabling cluster mode."
+      );
+      process.exit(1);
+    }
+    if (process.env.ALLOW_UNSAFE_CLUSTER !== "1") {
+      console.error(
+        "FATAL: Hub cluster mode is disabled by default because some in-memory subsystems are worker-local (for example webhook event logs).\n" +
+        "Run single-process (default), or set ALLOW_UNSAFE_CLUSTER=1 to force this at your own risk."
+      );
+      process.exit(1);
+    }
     startCluster(WORKERS);
   } else {
     const server = createServer();
@@ -678,5 +1096,6 @@ if (require.main === module) {
 
 module.exports = {
   createServer,
-  handleRequest
+  handleRequest,
+  webhooks
 };

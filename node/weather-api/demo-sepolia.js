@@ -3,9 +3,10 @@ const nodeHttp = require("http");
 const crypto = require("crypto");
 const { ethers } = require("ethers");
 const { signChannelState } = require("../scp-hub/state-signing");
+const { signPayeeAuth } = require("../scp-common/payee-auth");
 
 const RPC = process.env.SEPOLIA_RPC || "https://ethereum-sepolia-rpc.publicnode.com";
-const CONTRACT = "0x6F858C7120290431B606bBa343E3A8737B3dfCB4";
+const CONTRACT = "0x07ECA6701062Db12eDD04bEa391eD226C95aaD4b";
 const AGENT_KEY = "0xe55248855119d2e3213dc3622fc28fe4c58f3c85f4908c3b704169392230b261";
 const HUB_KEY = "0x59c6995e998f97a5a0044976f5d81f39bcb8c4f7f2d1b6c2c9f6f2c7d4b6f001";
 const ZERO32 = "0x" + "0".repeat(64);
@@ -136,11 +137,23 @@ async function main() {
   console.log("Hub:", hubUrl, "| Weather:", wxUrl);
 
   // Register Hub↔B channel in the hub's storage (opened on-chain above)
-  await httpReq("POST", `${hubUrl}/v1/hub/register-payee-channel`, {
+  const registerBody = {
     payee: payeeAddr,
     channelId: channelIdHB,
     asset: ethers.constants.AddressZero,
     totalDeposit: depositH.toString()
+  };
+  const registerTs = now();
+  const registerSig = await signPayeeAuth({
+    method: "POST",
+    path: "/v1/hub/register-payee-channel",
+    payee: payeeAddr,
+    timestamp: registerTs,
+    body: registerBody
+  }, payeeWallet);
+  await httpReq("POST", `${hubUrl}/v1/hub/register-payee-channel`, registerBody, {
+    "x-scp-payee-signature": registerSig,
+    "x-scp-payee-timestamp": String(registerTs)
   });
 
   // ── 4. A pays for weather through hub → B serves data ──

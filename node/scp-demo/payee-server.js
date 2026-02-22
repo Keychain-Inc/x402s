@@ -3,25 +3,29 @@ const http = require("http");
 const { URL } = require("url");
 const crypto = require("crypto");
 const { ethers } = require("ethers");
-const { verifyTicket } = require("../scp-hub/ticket");
+const { createVerifier } = require("../scp-hub/ticket");
 const { HttpJsonClient } = require("../scp-common/http-client");
-const { recoverChannelStateSigner } = require("../scp-hub/state-signing");
+const { resolveHubEndpointForNetwork, toCaip2 } = require("../scp-common/networks");
+
+const DEFAULT_NETWORK = toCaip2(process.env.NETWORK || "eip155:8453") || "eip155:8453";
 
 const DEFAULTS = {
   host: process.env.PAYEE_HOST || "127.0.0.1",
   port: Number(process.env.PAYEE_PORT || 4042),
-  hubUrl: process.env.HUB_URL || "http://127.0.0.1:4021",
-  network: process.env.NETWORK || "eip155:8453",
+  hubUrl: process.env.HUB_URL || resolveHubEndpointForNetwork(DEFAULT_NETWORK),
+  network: DEFAULT_NETWORK,
   asset: process.env.DEFAULT_ASSET || "0x833589fCD6eDb6E08f4c7C32D4f71b54bDa02913",
   price: process.env.PRICE || "1000000",
   hubName: process.env.HUB_NAME || "pay.eth",
   resourcePath: "/v1/data",
   routes: null, // { "/v1/data": { price: "1000000" }, "/v1/premium": { price: "5000000" } }
   perfMode: process.env.PERF_MODE === "1",
-  payeePrivateKey:
-    process.env.PAYEE_PRIVATE_KEY ||
-    "0x8b3a350cf5c34c9194ca3a545d8048f270f09f626b0f7238f71d0f8f8f005555"
+  payeePrivateKey: process.env.PAYEE_PRIVATE_KEY || null
 };
+if (!DEFAULTS.payeePrivateKey) {
+  console.error("FATAL: PAYEE_PRIVATE_KEY env var is required. Never use hardcoded keys.");
+  process.exit(1);
+}
 const defaultPayeeWallet = new ethers.Wallet(DEFAULTS.payeePrivateKey);
 const PAYEE_ADDRESS = defaultPayeeWallet.address;
 const RESOURCE_PATH = DEFAULTS.resourcePath;
@@ -49,20 +53,39 @@ function resolvePrice(routeCfg, asset, fallback) {
   return p;
 }
 
+const INVOICE_TTL = 300; // seconds — generous buffer over 120s quote expiry
+let lastSweep = 0;
+
+function sweepInvoices(invoiceStore) {
+  const t = now();
+  if (t - lastSweep < 60) return; // sweep at most once per minute
+  lastSweep = t;
+  for (const [id, inv] of invoiceStore) {
+    if (t - inv.createdAt > INVOICE_TTL) invoiceStore.delete(id);
+  }
+}
+
 function makeOffers(cfg, payeeAddress, routePath, routeCfg, invoiceStore) {
+  sweepInvoices(invoiceStore);
   const resource = `http://${cfg.host}:${cfg.port}${routePath || cfg.resourcePath}`;
   const acceptsList = (routeCfg && routeCfg.accepts) || [
     { network: cfg.network, asset: cfg.asset, hub: cfg.hubUrl, hubName: cfg.hubName }
   ];
   const offers = [];
   for (const entry of acceptsList) {
-    const network = entry.network || cfg.network;
+    const network = toCaip2(entry.network || cfg.network) || cfg.network;
     const asset = entry.asset || cfg.asset;
     const hubEndpoint = entry.hub || cfg.hubUrl;
     const hubName = entry.hubName || cfg.hubName;
     const price = entry.price || resolvePrice(routeCfg, asset, cfg.price);
     const invoiceId = randomId("inv");
-    invoiceStore.set(invoiceId, { createdAt: now(), amount: price });
+    invoiceStore.set(invoiceId, {
+      createdAt: now(),
+      amount: price,
+      asset,
+      network,
+      hubEndpoint
+    });
     offers.push({
       scheme: "statechannel-hub-v1",
       network,
@@ -102,122 +125,49 @@ function makeOffers(cfg, payeeAddress, routePath, routeCfg, invoiceStore) {
   return { accepts: offers };
 }
 
-function parsePaymentHeader(req) {
-  const raw = req.headers["payment-signature"] || req.headers["PAYMENT-SIGNATURE"];
-  if (!raw || typeof raw !== "string") return null;
-  try {
-    return JSON.parse(raw);
-  } catch (_e) {
-    return null;
+function collectHubUrls(cfg) {
+  const routeMap = cfg.routes || { [cfg.resourcePath]: { price: cfg.price } };
+  const set = new Set();
+  set.add(cfg.hubUrl);
+  for (const routeCfg of Object.values(routeMap)) {
+    const accepts = (routeCfg && routeCfg.accepts) || [];
+    for (const entry of accepts) {
+      if (entry && entry.hub) set.add(entry.hub);
+    }
   }
+  return [...set].filter(Boolean);
 }
 
-async function validatePayment(paymentPayload, ctx) {
-  const { cfg, payeeAddress, invoiceStore } = ctx;
-  if (!paymentPayload) return { ok: false, error: "missing payment header" };
-  if (paymentPayload.scheme !== "statechannel-hub-v1") {
-    return { ok: false, error: "wrong scheme" };
-  }
-  if (!paymentPayload.paymentId || !paymentPayload.invoiceId || !paymentPayload.ticket) {
-    return { ok: false, error: "missing payment fields" };
-  }
-
-  const ticket = paymentPayload.ticket;
-  const recovered = verifyTicket(ticket);
-  if (!recovered) return { ok: false, error: "invalid ticket signature" };
-
-  let hubAddress = ctx.hubAddressCache;
-  if (!hubAddress) {
-    const hubInfo = await ctx.http.request("GET", `${cfg.hubUrl}/.well-known/x402`);
-    if (hubInfo.statusCode !== 200 || !hubInfo.body.address) {
-      return { ok: false, error: "hub metadata unavailable" };
-    }
-    hubAddress = hubInfo.body.address;
-    ctx.hubAddressCache = hubAddress;
-  }
-  if (recovered.toLowerCase() !== hubAddress.toLowerCase()) {
-    return { ok: false, error: "ticket signer mismatch" };
-  }
-
-  if (ticket.payee.toLowerCase() !== payeeAddress.toLowerCase()) {
-    return { ok: false, error: "ticket payee mismatch" };
-  }
-  if (ticket.expiry < now()) return { ok: false, error: "ticket expired" };
-  if (ticket.invoiceId !== paymentPayload.invoiceId) {
-    return { ok: false, error: "invoice mismatch" };
-  }
-  if (ticket.paymentId !== paymentPayload.paymentId) {
-    return { ok: false, error: "payment id mismatch" };
-  }
-
-  const inv = invoiceStore.get(paymentPayload.invoiceId);
-  if (!inv) return { ok: false, error: "unknown invoice" };
-  if (inv.amount !== ticket.amount) return { ok: false, error: "amount mismatch" };
-
-  if (!cfg.perfMode) {
-    const paymentStatus = await ctx.http.request(
-      "GET",
-      `${cfg.hubUrl}/v1/payments/${encodeURIComponent(paymentPayload.paymentId)}`
-    );
-    if (paymentStatus.statusCode !== 200) return { ok: false, error: "hub payment unknown" };
-    if (paymentStatus.body.status !== "issued") {
-      return { ok: false, error: "hub payment not issued" };
-    }
-    if (paymentStatus.body.ticketId !== ticket.ticketId) {
-      return { ok: false, error: "ticket id mismatch at hub" };
-    }
-  }
-
-  return { ok: true };
+function getPaymentHeader(req) {
+  return req.headers["payment-signature"] || req.headers["PAYMENT-SIGNATURE"] || null;
 }
 
-function validateDirectPayment(paymentPayload, ctx) {
-  const { payeeAddress, invoiceStore, directChannels } = ctx;
-  if (!paymentPayload || paymentPayload.scheme !== "statechannel-direct-v1") {
-    return { ok: false, error: "wrong scheme" };
-  }
-  const dp = paymentPayload.direct;
-  if (!dp || !dp.channelState || !dp.sigA || !dp.payer || !dp.amount || !dp.asset || !dp.payee) {
-    return { ok: false, error: "missing direct payment fields" };
-  }
-  if (dp.payee.toLowerCase() !== payeeAddress.toLowerCase()) {
-    return { ok: false, error: "direct payee mismatch" };
-  }
-  if (dp.invoiceId !== paymentPayload.invoiceId || dp.paymentId !== paymentPayload.paymentId) {
-    return { ok: false, error: "direct id mismatch" };
-  }
-  if (dp.expiry < now()) return { ok: false, error: "direct payment expired" };
-
-  const inv = invoiceStore.get(paymentPayload.invoiceId);
-  if (!inv) return { ok: false, error: "unknown invoice" };
-  if (inv.amount !== dp.amount) return { ok: false, error: "amount mismatch" };
-
-  const signer = recoverChannelStateSigner(dp.channelState, dp.sigA);
-  if (signer.toLowerCase() !== dp.payer.toLowerCase()) {
-    return { ok: false, error: "payer signature mismatch" };
-  }
-
-  const channelId = dp.channelState.channelId;
-  const prev = directChannels.get(channelId) || { nonce: 0, balB: "0" };
-  const nextNonce = Number(dp.channelState.stateNonce);
-  if (nextNonce <= Number(prev.nonce)) return { ok: false, error: "stale direct nonce" };
-  const prevBalH = BigInt(prev.balB);
-  const nextBalH = BigInt(dp.channelState.balB);
-  const amount = BigInt(dp.amount);
-  if (nextBalH - prevBalH < amount) {
-    return { ok: false, error: "insufficient direct delta" };
-  }
-  if (dp.channelState.stateExpiry && Number(dp.channelState.stateExpiry) < now()) {
-    return { ok: false, error: "state expired" };
-  }
-
-  directChannels.set(channelId, { nonce: nextNonce, balB: dp.channelState.balB });
-  return { ok: true };
+function verifyWebhookSig(payload, secret, sigHeader) {
+  if (!sigHeader || !secret) return false;
+  const expected = "sha256=" + crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  return sigHeader === expected;
 }
 
 async function handle(req, res, ctx) {
   const { cfg, payeeAddress, invoiceStore, consumed } = ctx;
   const u = new URL(req.url, `http://${req.headers.host || `${cfg.host}:${cfg.port}`}`);
+
+  // Webhook receiver — hub pushes events here
+  if (req.method === "POST" && u.pathname === "/webhooks/hub") {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    if (ctx.webhookSecret && !verifyWebhookSig(body, ctx.webhookSecret, req.headers["x-scp-signature"])) {
+      return sendJson(res, 401, { error: "invalid webhook signature" });
+    }
+    try {
+      const event = JSON.parse(body);
+      if (!ctx.webhookEvents) ctx.webhookEvents = [];
+      ctx.webhookEvents.push(event);
+      if (ctx.webhookEvents.length > 500) ctx.webhookEvents = ctx.webhookEvents.slice(-500);
+      console.log(`[payee] webhook event: ${event.event} seq=${event.seq}`);
+    } catch (_e) { /* ignore malformed */ }
+    return sendJson(res, 200, { ok: true });
+  }
 
   const routeMap = cfg.routes || { [cfg.resourcePath]: { price: cfg.price } };
   const matchedRoute = routeMap[u.pathname];
@@ -227,8 +177,8 @@ async function handle(req, res, ctx) {
     return sendJson(res, 404, { error: "not found" });
   }
 
-  const paymentPayload = parsePaymentHeader(req);
-  if (!paymentPayload) {
+  const rawHeader = getPaymentHeader(req);
+  if (!rawHeader) {
     if (isPay) {
       const allOffers = [];
       for (const [rPath, rCfg] of Object.entries(routeMap)) {
@@ -240,42 +190,38 @@ async function handle(req, res, ctx) {
     return sendJson(res, 402, makeOffers(cfg, payeeAddress, u.pathname, matchedRoute, invoiceStore));
   }
 
-  if (consumed.has(paymentPayload.paymentId)) {
-    return sendJson(res, 200, consumed.get(paymentPayload.paymentId));
-  }
+  const invoiceLookup = (invoiceId, paymentProof) => {
+    const inv = invoiceStore.get(invoiceId);
+    if (!inv) return false;
+    if (!paymentProof) return true;
+    if (inv.amount && paymentProof.amount !== inv.amount) return false;
+    if (inv.asset && String(paymentProof.asset || "").toLowerCase() !== String(inv.asset).toLowerCase()) return false;
+    return true;
+  };
+  const result = await ctx.verifyPayment(rawHeader, invoiceLookup);
 
-  let result;
-  if (paymentPayload.scheme === "statechannel-direct-v1") {
-    result = validateDirectPayment(paymentPayload, ctx);
-  } else {
-    result = await validatePayment(paymentPayload, ctx);
-  }
+  if (result.replayed) return sendJson(res, 200, result.response);
+
   if (!result.ok) {
-    return sendJson(res, 402, {
-      error: result.error,
-      retryable: false
-    });
+    return sendJson(res, 402, { error: result.error, retryable: false });
   }
 
   const receipt = {
-    paymentId: paymentPayload.paymentId,
+    paymentId: result.paymentId,
     receiptId: randomId("rcpt"),
     acceptedAt: now()
   };
-  if (paymentPayload.scheme === "statechannel-direct-v1") {
-    receipt.directChannelId = paymentPayload.direct.channelState.channelId;
+  if (result.scheme === "direct") {
+    receipt.directChannelId = result.direct.channelState.channelId;
   } else {
-    receipt.ticketId = paymentPayload.ticket.ticketId;
+    receipt.ticketId = result.ticket.ticketId;
   }
   const payload = {
     ok: true,
-    data: {
-      value: "premium-resource",
-      payee: payeeAddress
-    },
+    data: { value: "premium-resource", payee: payeeAddress },
     receipt
   };
-  consumed.set(paymentPayload.paymentId, payload);
+  consumed.set(result.paymentId, payload);
   return sendJson(res, 200, payload);
 }
 
@@ -294,17 +240,54 @@ function createPayeeServer(options = {}) {
     invoiceStore,
     consumed,
     directChannels: new Map(),
-    hubAddressCache: null,
+    hubUrls: collectHubUrls(cfg),
     http: new HttpJsonClient({ timeoutMs: 8000, maxSockets: 128 })
   };
+  ctx.verifyPayment = createVerifier({
+    payee: payeeAddress,
+    hubs: ctx.hubUrls,
+    confirmHub: !cfg.perfMode,
+    seenPayments: consumed,
+    directChannels: ctx.directChannels
+  });
 
   const server = http.createServer((req, res) => {
     handle(req, res, ctx).catch((err) => {
       sendJson(res, 500, { error: err.message || "internal error" });
     });
   });
+
+  // Auto-register webhook with hub after listening
+  const origListen = server.listen.bind(server);
+  server.listen = function (...args) {
+    const s = origListen(...args);
+    s.once("listening", () => {
+      const addr = s.address();
+      const selfUrl = `http://${cfg.host === "0.0.0.0" ? "127.0.0.1" : cfg.host}:${addr.port}`;
+      const webhookUrl = `${selfUrl}/webhooks/hub`;
+      ctx.http
+        .request("POST", `${cfg.hubUrl}/v1/webhooks`, {
+          url: webhookUrl,
+          events: ["payment.received", "payment.refunded"],
+          channelId: "*"
+        })
+        .then((res) => {
+          if (res.statusCode === 201) {
+            ctx.webhookSecret = res.body.secret;
+            ctx.webhookId = res.body.webhookId;
+            console.log(`[payee] registered webhook ${res.body.webhookId} with hub`);
+          }
+        })
+        .catch(() => {
+          /* hub may not be up yet — non-fatal */
+        });
+    });
+    return s;
+  };
+
   server.on("close", () => {
     ctx.http.close();
+    if (ctx.verifyPayment && ctx.verifyPayment.close) ctx.verifyPayment.close();
   });
   return server;
 }

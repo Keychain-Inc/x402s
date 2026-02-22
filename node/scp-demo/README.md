@@ -27,6 +27,10 @@ e2e ok
 
 1. Requires `PAYMENT-SIGNATURE` retry header.
 2. Verifies hub ticket signature.
-3. Verifies ticket signer matches hub `/.well-known/x402` address.
+3. Verifies ticket signer against advertised hub key(s) from one or more hub endpoints.
 4. Verifies `payee`, `invoiceId`, `paymentId`, `amount`, and expiry.
 5. Verifies hub payment status is `issued` for the payment id.
+
+## Multi-Hub Offer Config
+
+If a route advertises multiple hub endpoints in `routes[].accepts[].hub`, the payee verifier now accepts and confirms any of those hubs automatically (instead of assuming only `HUB_URL`).

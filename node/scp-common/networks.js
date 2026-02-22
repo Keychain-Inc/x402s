@@ -26,8 +26,13 @@ const ASSETS = {
   "84532:eth":  { address: ethers.constants.AddressZero, decimals: 18, symbol: "ETH" }
 };
 
+// Deterministic CREATE2 deployment (same salt/factory/bytecode).
+const C2_CANONICAL_CONTRACT = "0x07ECA6701062Db12eDD04bEa391eD226C95aaD4b";
+
+// Explicitly listed chains (same address as canonical).
 const CONTRACTS = {
-  11155111: "0x6F858C7120290431B606bBa343E3A8737B3dfCB4"
+  8453: C2_CANONICAL_CONTRACT,      // Base
+  11155111: C2_CANONICAL_CONTRACT   // Sepolia
 };
 
 function resolveNetwork(name) {
@@ -38,6 +43,47 @@ function resolveNetwork(name) {
     throw new Error(`Unknown network: ${name}. Known: ${names.join(", ")}`);
   }
   return net;
+}
+
+function normalizeChainId(networkOrChainId) {
+  if (networkOrChainId === null || networkOrChainId === undefined) return null;
+  const raw = String(networkOrChainId).trim().toLowerCase();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  if (raw.startsWith("eip155:")) {
+    const n = Number(raw.split(":")[1]);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+  try {
+    return resolveNetwork(raw).chainId;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function toCaip2(networkOrChainId) {
+  const chainId = normalizeChainId(networkOrChainId);
+  if (!Number.isInteger(chainId) || chainId <= 0) return null;
+  return `eip155:${chainId}`;
+}
+
+function hubPathForChainId(chainId) {
+  if (chainId === 1) return "/hub/eth";
+  if (chainId === 8453) return "/hub/base";
+  if (chainId === 11155111) return "/hub/sepolia";
+  if (chainId === 84532) return "/hub/base-sepolia";
+  return "/hub/sepolia";
+}
+
+function resolveHubEndpointForNetwork(networkOrChainId, options = {}) {
+  const chainId = normalizeChainId(networkOrChainId);
+  const baseUrl = String(
+    options.baseUrl ||
+    process.env.HUB_BASE_URL ||
+    process.env.PUBLIC_HUB_BASE_URL ||
+    "http://159.223.150.70"
+  ).replace(/\/+$/, "");
+  return `${baseUrl}${hubPathForChainId(chainId)}`;
 }
 
 function resolveAsset(chainId, symbol) {
@@ -53,7 +99,7 @@ function resolveAsset(chainId, symbol) {
 }
 
 function resolveContract(chainId) {
-  return CONTRACTS[chainId] || process.env.CONTRACT_ADDRESS || null;
+  return CONTRACTS[chainId] || process.env.CONTRACT_ADDRESS || C2_CANONICAL_CONTRACT;
 }
 
 function parseAmount(humanAmount, decimals) {
@@ -67,5 +113,6 @@ function formatAmount(rawAmount, decimals) {
 module.exports = {
   NETWORKS, ASSETS, CONTRACTS,
   resolveNetwork, resolveAsset, resolveContract,
+  normalizeChainId, toCaip2, resolveHubEndpointForNetwork,
   parseAmount, formatAmount
 };

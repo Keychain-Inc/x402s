@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-contract MockERC20 {
+contract MockERC20FailingTransfer {
     string public name;
     string public symbol;
     uint8 public decimals;
@@ -9,6 +9,9 @@ contract MockERC20 {
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
+
+    address public blockedRecipient;
+    bool public failBlockedRecipient;
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
@@ -23,6 +26,11 @@ contract MockERC20 {
         decimals = _decimals;
     }
 
+    function setFailure(address recipient, bool shouldFail) external {
+        blockedRecipient = recipient;
+        failBlockedRecipient = shouldFail;
+    }
+
     function mint(address to, uint256 amount) external {
         totalSupply += amount;
         balanceOf[to] += amount;
@@ -30,6 +38,9 @@ contract MockERC20 {
     }
 
     function transfer(address to, uint256 amount) external returns (bool) {
+        if (failBlockedRecipient && to == blockedRecipient) {
+            return false;
+        }
         _transfer(msg.sender, to, amount);
         return true;
     }
@@ -46,7 +57,7 @@ contract MockERC20 {
         uint256 amount
     ) external returns (bool) {
         uint256 current = allowance[from][msg.sender];
-        require(current >= amount, "MockERC20: allowance");
+        require(current >= amount, "MockERC20FailingTransfer: allowance");
         allowance[from][msg.sender] = current - amount;
         _transfer(from, to, amount);
         return true;
@@ -57,9 +68,9 @@ contract MockERC20 {
         address to,
         uint256 amount
     ) internal {
-        require(to != address(0), "MockERC20: zero to");
+        require(to != address(0), "MockERC20FailingTransfer: zero to");
         uint256 bal = balanceOf[from];
-        require(bal >= amount, "MockERC20: balance");
+        require(bal >= amount, "MockERC20FailingTransfer: balance");
         balanceOf[from] = bal - amount;
         balanceOf[to] += amount;
         emit Transfer(from, to, amount);

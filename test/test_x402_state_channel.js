@@ -4,6 +4,7 @@ const { ethers, network } = require("hardhat");
 describe("X402StateChannel", function () {
   let hub;
   let token;
+  let failingToken;
   let a;
   let b;
   let other;
@@ -11,9 +12,29 @@ describe("X402StateChannel", function () {
 
   const ONE_ETH = ethers.utils.parseEther("1");
 
+  const EIP712_TYPES = {
+    ChannelState: [
+      { name: "channelId", type: "bytes32" },
+      { name: "stateNonce", type: "uint64" },
+      { name: "balA", type: "uint256" },
+      { name: "balB", type: "uint256" },
+      { name: "locksRoot", type: "bytes32" },
+      { name: "stateExpiry", type: "uint64" },
+      { name: "contextHash", type: "bytes32" }
+    ]
+  };
+
+  function eip712Domain() {
+    return {
+      name: "X402StateChannel",
+      version: "1",
+      chainId: 31337, // hardhat default
+      verifyingContract: hub.address
+    };
+  }
+
   async function signState(state, signer) {
-    const digest = await hub.hashState(state);
-    return signer.signMessage(ethers.utils.arrayify(digest));
+    return signer._signTypedData(eip712Domain(), EIP712_TYPES, state);
   }
 
   async function increaseTime(seconds) {
@@ -31,6 +52,10 @@ describe("X402StateChannel", function () {
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     token = await MockERC20.deploy("Mock USD", "mUSD", 6);
     await token.deployed();
+
+    const MockERC20FailingTransfer = await ethers.getContractFactory("MockERC20FailingTransfer");
+    failingToken = await MockERC20FailingTransfer.deploy("Mock Fail USD", "mfUSD", 6);
+    await failingToken.deployed();
   });
 
   async function openEthChannel(amount, challenge, expiryDelta, saltLabel) {
@@ -218,6 +243,50 @@ describe("X402StateChannel", function () {
     expect(await token.balanceOf(hub.address)).to.eq(0);
   });
 
+  it("defers failed ERC20 payouts and allows later withdrawal", async function () {
+    const now = (await ethers.provider.getBlock("latest")).timestamp;
+    const amount = ethers.BigNumber.from("1000000");
+
+    await failingToken.mint(a.address, amount);
+    await failingToken.connect(a).approve(hub.address, amount);
+    await failingToken.setFailure(b.address, true);
+
+    const salt = ethers.utils.formatBytes32String("erc20-defer");
+    const openTx = await hub
+      .connect(a)
+      .openChannel(b.address, failingToken.address, amount, 600, now + 7200, salt);
+    const openRc = await openTx.wait();
+    const channelId = openRc.events.find((e) => e.event === "ChannelOpened").args.channelId;
+
+    const state = {
+      channelId,
+      stateNonce: 1,
+      balA: ethers.BigNumber.from("750000"),
+      balB: ethers.BigNumber.from("250000"),
+      locksRoot: ethers.constants.HashZero,
+      stateExpiry: now + 1800,
+      contextHash: ethers.utils.id("erc20-defer-state"),
+    };
+    const sigA = await signState(state, a);
+    const sigB = await signState(state, b);
+
+    await hub.connect(other).cooperativeClose(state, sigA, sigB);
+
+    const closed = await hub.getChannel(channelId);
+    expect(closed.participantA).to.eq(ethers.constants.AddressZero);
+    expect(await failingToken.balanceOf(a.address)).to.eq(state.balA);
+    expect(await failingToken.balanceOf(b.address)).to.eq(0);
+    expect(await hub.pendingPayout(failingToken.address, b.address)).to.eq(state.balB);
+    expect(await failingToken.balanceOf(hub.address)).to.eq(state.balB);
+
+    await failingToken.setFailure(b.address, false);
+    await hub.connect(b).withdrawPayout(failingToken.address);
+
+    expect(await hub.pendingPayout(failingToken.address, b.address)).to.eq(0);
+    expect(await failingToken.balanceOf(b.address)).to.eq(state.balB);
+    expect(await failingToken.balanceOf(hub.address)).to.eq(0);
+  });
+
   it("rejects non-participant deposits", async function () {
     const { channelId } = await openEthChannel(ONE_ETH, 3600, 7200, "deposit-auth");
     await expect(
@@ -352,13 +421,63 @@ describe("X402StateChannel", function () {
     await expect(hub.connect(b).challenge(state2, sigA)).to.be.revertedWith("SCP: deadline passed");
   });
 
+  it("rejects repeated startClose after channel enters closing", async function () {
+    const { channelId, now } = await openEthChannel(ONE_ETH, 100, 7200, "startclose-repeat");
+    const state1 = {
+      channelId,
+      stateNonce: 1,
+      balA: ethers.utils.parseEther("0.8"),
+      balB: ethers.utils.parseEther("0.2"),
+      locksRoot: ethers.constants.HashZero,
+      stateExpiry: now + 600,
+      contextHash: ethers.utils.id("repeat-startclose"),
+    };
+    const sigBOn1 = await signState(state1, b);
+    await hub.connect(a).startClose(state1, sigBOn1);
+    await expect(hub.connect(a).startClose(state1, sigBOn1)).to.be.revertedWith("SCP: already closing");
+  });
+
+  it("rejects reopening a previously closed channel id", async function () {
+    const now = (await ethers.provider.getBlock("latest")).timestamp;
+    const amount = ONE_ETH;
+    const salt = ethers.utils.formatBytes32String("reopen-same-id");
+    const openTx = await hub
+      .connect(a)
+      .openChannel(b.address, ethers.constants.AddressZero, amount, 600, now + 7200, salt, {
+        value: amount,
+      });
+    const openRc = await openTx.wait();
+    const channelId = openRc.events.find((e) => e.event === "ChannelOpened").args.channelId;
+
+    const closeState = {
+      channelId,
+      stateNonce: 1,
+      balA: ethers.utils.parseEther("0.7"),
+      balB: ethers.utils.parseEther("0.3"),
+      locksRoot: ethers.constants.HashZero,
+      stateExpiry: now + 1800,
+      contextHash: ethers.utils.id("close-once"),
+    };
+    const sigA = await signState(closeState, a);
+    const sigB = await signState(closeState, b);
+    await hub.connect(other).cooperativeClose(closeState, sigA, sigB);
+
+    await expect(
+      hub
+        .connect(a)
+        .openChannel(b.address, ethers.constants.AddressZero, amount, 600, now + 7200, salt, {
+          value: amount,
+        })
+    ).to.be.revertedWith("SCP: id used");
+  });
+
   it("rejects ERC20 open without allowance", async function () {
     const now = (await ethers.provider.getBlock("latest")).timestamp;
     const amount = ethers.BigNumber.from("1000000");
     await token.mint(a.address, amount);
     await expect(
       hub.connect(a).openChannel(b.address, token.address, amount, 600, now + 3600, ethers.utils.formatBytes32String("no-allow"))
-    ).to.be.revertedWith("MockERC20: allowance");
+    ).to.be.revertedWith("SCP: transferFrom");
   });
 
   it("rejects operations on unknown channels", async function () {
@@ -366,6 +485,31 @@ describe("X402StateChannel", function () {
     await expect(hub.getChannel(fake)).to.not.be.reverted;
     await expect(hub.connect(a).deposit(fake, 1, { value: 1 })).to.be.revertedWith("SCP: not found");
     await expect(hub.connect(a).finalizeClose(fake)).to.be.revertedWith("SCP: not found");
+  });
+
+  it("removes closed channels from active indexes", async function () {
+    const { channelId, now } = await openEthChannel(ONE_ETH, 600, 7200, "index-cleanup");
+    const state = {
+      channelId,
+      stateNonce: 1,
+      balA: ethers.utils.parseEther("0.6"),
+      balB: ethers.utils.parseEther("0.4"),
+      locksRoot: ethers.constants.HashZero,
+      stateExpiry: now + 1800,
+      contextHash: ethers.utils.id("cleanup"),
+    };
+    const sigA = await signState(state, a);
+    const sigB = await signState(state, b);
+
+    await hub.connect(other).cooperativeClose(state, sigA, sigB);
+
+    expect(await hub.getChannelCount()).to.eq(0);
+    const ids = await hub.getChannelIds(0, 10);
+    expect(ids.length).to.eq(0);
+    const aIds = await hub.getChannelsByParticipant(a.address);
+    const bIds = await hub.getChannelsByParticipant(b.address);
+    expect(aIds.length).to.eq(0);
+    expect(bIds.length).to.eq(0);
   });
 
   it("rejects open with invalid params", async function () {

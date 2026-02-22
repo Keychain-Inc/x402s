@@ -6,7 +6,7 @@ const { signChannelState } = require("../node/scp-hub/state-signing");
 
 // --- Config ---
 const RPC = process.env.SEPOLIA_RPC || "https://ethereum-sepolia-rpc.publicnode.com";
-const CONTRACT = "0x6F858C7120290431B606bBa343E3A8737B3dfCB4";
+const CONTRACT = "0x07ECA6701062Db12eDD04bEa391eD226C95aaD4b";
 const AGENT_KEY = "0xe55248855119d2e3213dc3622fc28fe4c58f3c85f4908c3b704169392230b261";
 const HUB_KEY = "0x59c6995e998f97a5a0044976f5d81f39bcb8c4f7f2d1b6c2c9f6f2c7d4b6f001";
 const ZERO32 = "0x" + "0".repeat(64);

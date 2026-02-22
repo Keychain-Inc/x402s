@@ -4,6 +4,7 @@ const path = require("path");
 
 const stateDir = process.env.AGENT_STATE_DIR || path.resolve(__dirname, "./state");
 const stateFile = path.join(stateDir, "agent-state.json");
+const mode = process.argv[2] || "list";
 
 function fmtTs(ts) {
   if (!ts) return "-";
@@ -30,6 +31,46 @@ function main() {
   const rows = ids
     .map((id) => ({ paymentId: id, ...payments[id] }))
     .sort((a, b) => Number(b.paidAt || 0) - Number(a.paidAt || 0));
+
+  if (mode === "api" || mode === "--api" || mode === "summary" || mode === "--summary") {
+    const byApi = {};
+    for (const p of rows) {
+      if (!p.resourceUrl || !p.amount) continue;
+      let key = p.resourceUrl;
+      try {
+        const u = new URL(p.resourceUrl);
+        key = `${u.origin}${u.pathname}`;
+      } catch (_e) {
+        // keep raw key
+      }
+      if (!byApi[key]) {
+        byApi[key] = { api: key, payments: 0, earned: 0n, lastPaidAt: 0 };
+      }
+      byApi[key].payments += 1;
+      byApi[key].earned += BigInt(p.amount);
+      byApi[key].lastPaidAt = Math.max(byApi[key].lastPaidAt, Number(p.paidAt || 0));
+    }
+
+    const summary = Object.values(byApi).sort((a, b) => {
+      if (a.earned === b.earned) return b.payments - a.payments;
+      return a.earned > b.earned ? -1 : 1;
+    });
+
+    if (summary.length === 0) {
+      console.log("No API earnings data yet (no payments with resourceUrl + amount).");
+      process.exit(0);
+    }
+
+    console.log(`APIs: ${summary.length}`);
+    for (const s of summary) {
+      console.log("-----");
+      console.log(`  api:       ${s.api}`);
+      console.log(`  payments:  ${s.payments}`);
+      console.log(`  earned:    ${s.earned.toString()}`);
+      console.log(`  lastPaid:  ${fmtTs(s.lastPaidAt)}`);
+    }
+    process.exit(0);
+  }
 
   console.log(`Payments: ${rows.length}`);
   for (const p of rows) {

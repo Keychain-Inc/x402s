@@ -2,6 +2,7 @@
 const fs = require("fs");
 const path = require("path");
 const { ethers } = require("ethers");
+const { HttpJsonClient } = require("../scp-common/http-client");
 
 function cfg() {
   return {
@@ -15,7 +16,8 @@ function cfg() {
       process.env.HUB_STORE_PATH || path.resolve(__dirname, "../scp-hub/data/store.json"),
     agentStatePath:
       process.env.AGENT_STATE_PATH || path.resolve(__dirname, "../scp-agent/state/agent-state.json"),
-    watcherKey: process.env.WATCHER_PRIVATE_KEY || ""
+    watcherKey: process.env.WATCHER_PRIVATE_KEY || "",
+    hubUrl: process.env.HUB_URL || ""
   };
 }
 
@@ -53,19 +55,55 @@ function readLocalProofForChannel(channelId, role) {
   return { state: watch.state, counterpartySig: watch.sigB };
 }
 
-async function tickChannel(contract, channelId, role, safetyBufferSec) {
+// Track on-chain state per channel to detect transitions
+const channelStates = new Map(); // channelId → { isClosing, nonce, deadline }
+
+async function notifyHub(hubUrl, event, data) {
+  if (!hubUrl) return;
+  try {
+    const http = new HttpJsonClient({ timeoutMs: 3000 });
+    const adminToken = process.env.HUB_ADMIN_TOKEN || "";
+    const headers = adminToken
+      ? { authorization: `Bearer ${adminToken}` }
+      : {};
+    await http.request("POST", `${hubUrl}/v1/events/emit`, { event, data }, headers);
+    http.close();
+  } catch (_e) { /* hub unreachable — non-fatal */ }
+}
+
+async function tickChannel(contract, channelId, role, safetyBufferSec, hubUrl) {
   const local = readLocalProofForChannel(channelId, role);
   if (!local) return;
 
   const onchain = await contract.getChannel(channelId);
   if (!onchain.participantA || onchain.participantA === ethers.constants.AddressZero) return;
-  if (!onchain.isClosing) return;
 
+  const prev = channelStates.get(channelId) || { isClosing: false, nonce: 0, finalized: false };
   const onchainNonce = Number(onchain.latestNonce);
-  const localNonce = Number(local.state.stateNonce);
   const closeDeadline = Number(onchain.closeDeadline);
   const ts = now();
 
+  // Detect state transitions
+  if (onchain.isClosing && !prev.isClosing) {
+    console.log(`[watch:${role}] ${channelId.slice(0, 10)}... close started, deadline ${closeDeadline}`);
+    notifyHub(hubUrl, "channel.close_started", { channelId, closeDeadline, onchainNonce });
+  }
+  if (onchain.isClosing && onchainNonce > prev.nonce && prev.isClosing) {
+    console.log(`[watch:${role}] ${channelId.slice(0, 10)}... challenged, nonce ${prev.nonce} → ${onchainNonce}`);
+    notifyHub(hubUrl, "channel.challenged", { channelId, previousNonce: prev.nonce, newNonce: onchainNonce });
+  }
+  if (onchain.isClosing && ts >= closeDeadline && !prev.finalized) {
+    console.log(`[watch:${role}] ${channelId.slice(0, 10)}... closed (deadline passed)`);
+    notifyHub(hubUrl, "channel.closed", { channelId, finalNonce: onchainNonce });
+    channelStates.set(channelId, { isClosing: true, nonce: onchainNonce, finalized: true });
+    return;
+  }
+
+  channelStates.set(channelId, { isClosing: onchain.isClosing, nonce: onchainNonce, finalized: false });
+
+  if (!onchain.isClosing) return;
+
+  const localNonce = Number(local.state.stateNonce);
   if (ts + safetyBufferSec >= closeDeadline) {
     console.log(`[watch:${role}] ${channelId.slice(0, 10)}... too close/past deadline`);
     return;
@@ -76,11 +114,12 @@ async function tickChannel(contract, channelId, role, safetyBufferSec) {
   const tx = await contract.challenge(local.state, local.counterpartySig);
   const rc = await tx.wait(1);
   console.log(`[watch:${role}] challenge mined: ${rc.transactionHash}`);
+  notifyHub(hubUrl, "channel.challenged", { channelId, previousNonce: onchainNonce, newNonce: localNonce, txHash: rc.transactionHash });
 }
 
-async function tick(contract, channelIds, role, safetyBufferSec) {
+async function tick(contract, channelIds, role, safetyBufferSec, hubUrl) {
   for (const id of channelIds) {
-    await tickChannel(contract, id, role, safetyBufferSec).catch((err) => {
+    await tickChannel(contract, id, role, safetyBufferSec, hubUrl).catch((err) => {
       console.error(`[watch:${role}] ${id.slice(0, 10)}... error:`, err.message || err);
     });
   }
@@ -123,9 +162,10 @@ async function main() {
     if (!c.channelId) {
       channelIds = await discoverChannels(contract, signer.address);
     }
-    await tick(contract, channelIds, c.role, c.safetyBufferSec);
+    await tick(contract, channelIds, c.role, c.safetyBufferSec, c.hubUrl);
   };
 
+  if (c.hubUrl) console.log(`[watch:${c.role}] hub notifications → ${c.hubUrl}`);
   await runTick();
   setInterval(() => {
     runTick().catch((err) => {

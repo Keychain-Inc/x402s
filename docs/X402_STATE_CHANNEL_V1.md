@@ -51,9 +51,9 @@ In v1 default mode, `B` accepts a hub-issued settlement ticket. `B` trusts that 
 - `B` trust: bounded by hub signature validity, ticket expiry, and hub credit policy.
 - `H` trust: protected by valid channel updates proving `A` debit authorization.
 
-### 5.2 Optional Conditional Mode (`virtual_htlc`)
+### 5.2 Future: Conditional Mode
 
-Advanced mode uses lock conditions so payee claims are cryptographically linked to payer debits. This reduces trust in `H` but increases complexity and overhead.
+A future version may introduce lock-based conditional claims (e.g. hash-time-locked) to reduce trust in `H`. This is out of scope for v1.
 
 ## 6. Identifiers
 
@@ -232,6 +232,7 @@ Replay safety MUST include all of:
 
 1. `B` decides refund amount.
 2. `B -> H`: refund request bound to `ticketId`.
+   - v1 wire fields: `{ ticketId, refundAmount, reason }`
 3. `H` issues reverse channel update crediting `A`.
 4. `H -> A`: signed refund receipt with new `stateNonce`.
 
@@ -241,6 +242,48 @@ Replay safety MUST include all of:
 2. Unilateral close: submit latest known state, wait challenge window.
 3. Challenge: counterparty submits higher valid nonce.
 4. Finalize: highest valid state wins.
+
+### 10.6 Channel State Machine
+
+```
+  openChannel()
+       │
+       ▼
+   ┌────────┐  cooperativeClose()   ┌────────┐
+   │  OPEN  │──────────────────────►│ CLOSED │
+   └────────┘                       └────────┘
+       │                                 ▲
+       │ startClose()                    │ finalizeClose()
+       ▼                                 │  (after deadline)
+   ┌─────────┐  challenge()         ┌────────────┐
+   │ CLOSING │─────────────────────►│ CHALLENGED │
+   └─────────┘                      └────────────┘
+       │                                 │
+       │  finalizeClose()                │ challenge()
+       │  (after deadline)               │ (higher nonce replaces)
+       ▼                                 ▼
+   ┌────────┐                       ┌────────────┐
+   │ CLOSED │                       │ CHALLENGED │ (updated state)
+   └────────┘                       └────────────┘
+```
+
+| From | Event | To | Condition |
+|------|-------|----|-----------|
+| — | `openChannel()` | `OPEN` | Valid deposit and params |
+| `OPEN` | Off-chain state updates | `OPEN` | `stateNonce` strictly increases; `balA + balB` preserved |
+| `OPEN` | `cooperativeClose(state, sigA, sigB)` | `CLOSED` | Both signatures valid; immediate settlement |
+| `OPEN` | `startClose(state, sigCounterparty)` | `CLOSING` | Valid counterparty sig; sets `deadline = now + challengePeriod` |
+| `CLOSING` | `challenge(newerState, sigCounterparty)` | `CHALLENGED` | `newerState.nonce > currentState.nonce`; `deadline` unchanged |
+| `CHALLENGED` | `challenge(newerState, sigCounterparty)` | `CHALLENGED` | Higher nonce replaces again; `deadline` unchanged |
+| `CLOSING` | `finalizeClose(channelId)` | `CLOSED` | `now >= deadline`; settles on-chain per last accepted state |
+| `CHALLENGED` | `finalizeClose(channelId)` | `CLOSED` | `now >= deadline`; settles on-chain per highest challenged state |
+
+Rules:
+
+1. `CLOSED` is terminal — no further transitions.
+2. Challenge does NOT reset the deadline. The original `challengePeriod` from `startClose` governs.
+3. Multiple `challenge()` calls are valid as long as each provides a strictly higher nonce.
+4. `cooperativeClose` is only valid from `OPEN` — once unilateral close starts, the challenge window must play out.
 
 ## 11. Fee Model
 
@@ -468,8 +511,8 @@ Errors SHOULD include machine-readable details and retryability hints.
 
 ### 18.3 Profile P2
 
-1. `virtual_htlc`.
-2. Multi-hub discovery and route preference.
+1. Multi-hub discovery and route preference.
+2. Conditional claim mode (deferred — not specified in v1).
 
 ### 18.4 Profile P3 (`direct`)
 
@@ -496,7 +539,81 @@ Recommended endpoints:
 4. fee policy
 5. max quote TTL
 
-## 20. Example End-to-End
+Reference implementation currently also exposes:
+
+1. `GET /v1/payee/inbox?payee=0x...&since=...&limit=...`
+2. `GET /v1/payee/balance?payee=0x...`
+3. `GET /v1/payee/channel-state?payee=0x...`
+4. `POST /v1/payee/settle`
+5. `POST /v1/hub/open-payee-channel`
+6. `POST /v1/hub/register-payee-channel`
+7. `GET /v1/agent/summary?channelId=0x...`
+
+## 20. Async Notifications (Webhooks)
+
+The core protocol is request-response, but several events happen asynchronously and require out-of-band notification.
+
+### 20.1 Event Types
+
+| Event | Source | Recipient | Description |
+|-------|--------|-----------|-------------|
+| `channel.close_started` | Chain / Watcher | `A`, `H` | Counterparty submitted `startClose` on-chain |
+| `channel.challenged` | Chain / Watcher | `A`, `H` | Higher nonce submitted during challenge window |
+| `channel.closed` | Chain / Watcher | `A`, `H` | Channel finalized and settled |
+| `payment.refunded` | `H` | `A` | Hub issued a reverse transfer crediting `A` |
+| `payment.received` | `H` | `B` | New ticket credited to payee's hub balance |
+| `balance.low` | `H` | `A` | Agent's channel balance below threshold |
+
+### 20.2 Delivery
+
+Implementations SHOULD support at least one of:
+
+1. **Webhook (RECOMMENDED)**: Hub sends `POST` to a URL registered by the subscriber. Payload is JSON with `{ event, timestamp, data }`. Hub MUST retry with exponential backoff on `5xx` or timeout. Hub MUST include an HMAC signature header (`X-SCP-Signature`) so the receiver can verify authenticity.
+
+2. **Polling**: Subscriber calls `GET /v1/events?since={cursor}&channelId={channelId}`. Hub returns ordered event list. This is the fallback for clients that cannot receive inbound HTTP.
+   - Reference implementation also accepts `channel` as an alias for `channelId`.
+
+3. **WebSocket**: Hub accepts `ws` upgrade on `/v1/events/stream`. Hub pushes events as JSON frames. Client sends `subscribe` messages to filter by channel or event type.
+
+### 20.3 Webhook Registration
+
+```
+POST /v1/webhooks
+{
+  "url": "https://agent.example/hooks/scp",
+  "events": ["channel.close_started", "payment.refunded", "balance.low"],
+  "channelId": "0x...",
+  "secret": "shared-hmac-secret"
+}
+```
+
+Hub responds with `{ webhookId, status: "active" }`. Subscriber MAY update or delete via `PATCH /v1/webhooks/{id}` and `DELETE /v1/webhooks/{id}`.
+
+### 20.4 Payload Format
+
+```json
+{
+  "event": "channel.close_started",
+  "timestamp": 1770000200,
+  "webhookId": "wh_abc123",
+  "data": {
+    "channelId": "0x...",
+    "submittedBy": "0xCounterparty...",
+    "stateNonce": 42,
+    "deadline": 1770086600
+  }
+}
+```
+
+### 20.5 Requirements
+
+1. Hub MUST deliver events in causal order per channel.
+2. Hub MUST deduplicate by `(event, channelId, stateNonce)` — receiver may see the same event at most once per delivery attempt.
+3. Receiver MUST respond `200` within 5 seconds or hub will retry.
+4. Hub SHOULD cap retries at 5 attempts over 1 hour, then mark webhook as `failing`.
+5. Watcher-originated events (on-chain) SHOULD include `txHash` and `blockNumber` in `data`.
+
+## 21. Example End-to-End
 
 1. Agent opens channel with `pay.eth` on Base with USDC.
 2. Agent accesses `B1`, gets `402`, receives invoice.
@@ -514,15 +631,15 @@ Direct variant:
 3. Agent retries with direct payload and `sigA`.
 4. Payee verifies signer, nonce, and value delta, then serves response.
 
-## 21. Backward Compatibility
+## 22. Backward Compatibility
 
 These schemes are additive to x402 and do not alter baseline `402` semantics. Payees MAY offer multiple schemes in `accepts`, allowing wallets to select direct state channel route or hub route.
 
-## 22. Non-Payee and Peer Payment Profile
+## 23. Non-Payee and Peer Payment Profile
 
 This protocol MAY be used for simple non-payee transfers (for example person-to-person, agent-to-agent, subscription pull, or reimbursement) without a payee storefront.
 
-### 22.1 Profile `peer_simple`
+### 23.1 Profile `peer_simple`
 
 1. Receiver acts as `B` but MAY be only a wallet endpoint or static identity record.
 2. `HTTP 402` challenge is OPTIONAL.
@@ -530,7 +647,7 @@ This protocol MAY be used for simple non-payee transfers (for example person-to-
 4. `resource` binding MAY be replaced by `paymentMemo` binding.
 5. Hub ticket and signed channel state remain REQUIRED.
 
-### 22.2 Minimal Flow
+### 23.2 Minimal Flow
 
 1. `A -> H`: request quote for `{recipient, amount, asset, paymentMemo}`.
 2. `H -> A`: quote with `fee`, `totalDebit`, expiry.
@@ -539,21 +656,20 @@ This protocol MAY be used for simple non-payee transfers (for example person-to-
 5. `A -> recipient endpoint` or `A -> H`: submit ticket for credit notification.
 6. Recipient verifies signature or queries `H/F` and marks payment received.
 
-### 22.3 Required Safety
+### 23.3 Required Safety
 
 1. `contextHash` MUST include recipient identity and `paymentMemo` (or equivalent).
 2. `paymentId` idempotency MUST still be enforced.
 3. Receiver acceptance policy MUST define ticket expiry tolerance and replay handling.
 
-## 23. Open Questions (for standardization process)
+## 24. Open Questions (for standardization process)
 
 1. Canonical header field naming for payment retry payload.
 2. Single-use vs multi-use ticket policy defaults.
 3. Standard revocation endpoint semantics.
-4. Exact schema for `virtual_htlc` lock proofs.
-5. Cross-chain channel portability model.
+4. Cross-chain channel portability model.
 
-## 24. Appendix A: EIP-712 Type Suggestion
+## 25. Appendix A: EIP-712 Type Suggestion
 
 ```text
 ChannelState(
@@ -567,7 +683,7 @@ ChannelState(
 )
 ```
 
-## 25. Appendix B: `contextHash` Recommendation
+## 26. Appendix B: `contextHash` Recommendation
 
 `contextHash = keccak256(abi.encode(
   payee,
