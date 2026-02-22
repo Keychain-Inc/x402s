@@ -22,6 +22,8 @@ Optional env:
 - `HUB_NAME` (default `pay.eth`)
 - `HUB_ENDPOINT` (default `http://127.0.0.1:4021`)
 - `MEOW_PRICE_ETH` (default `0.0000001`)
+- `MEOW_PAYMENT_MODE` or `PAYMENT_MODE` (`per_request` default, `pay_once` to unlock `/meow` per access token)
+- `MEOW_PAY_ONCE_TTL_SEC` or `PAY_ONCE_TTL_SEC` (default `86400`)
 
 ## Endpoints
 

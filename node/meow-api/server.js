@@ -26,7 +26,18 @@ const HUB_FEE_BASE = String(process.env.HUB_FEE_BASE || "0");
 const HUB_FEE_BPS = Number(process.env.HUB_FEE_BPS || 0);
 const PRICE_ETH = process.env.MEOW_PRICE_ETH || "0.0000001";
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
+const PAYMENT_MODE = String(process.env.MEOW_PAYMENT_MODE || process.env.PAYMENT_MODE || "per_request").toLowerCase();
+const PAY_ONCE_TTL_SEC = Number(process.env.MEOW_PAY_ONCE_TTL_SEC || process.env.PAY_ONCE_TTL_SEC || 86400);
 const ASSET_ETH = ethers.constants.AddressZero;
+
+if (!["per_request", "pay_once"].includes(PAYMENT_MODE)) {
+  console.error("FATAL: invalid payment mode; use per_request or pay_once");
+  process.exit(1);
+}
+if (!Number.isInteger(PAY_ONCE_TTL_SEC) || PAY_ONCE_TTL_SEC <= 0) {
+  console.error("FATAL: invalid pay-once TTL; expected positive integer seconds");
+  process.exit(1);
+}
 
 let chainId;
 if (NETWORK.startsWith("eip155:")) {
@@ -81,6 +92,56 @@ function parsePaymentHeader(req) {
   } catch (_e) {
     return null;
   }
+}
+
+function parseCookies(req) {
+  const raw = req.headers.cookie;
+  if (!raw || typeof raw !== "string") return {};
+  const out = {};
+  for (const pair of raw.split(";")) {
+    const idx = pair.indexOf("=");
+    if (idx <= 0) continue;
+    const key = pair.slice(0, idx).trim();
+    const value = pair.slice(idx + 1).trim();
+    if (!key) continue;
+    try {
+      out[key] = decodeURIComponent(value);
+    } catch (_e) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function getAccessToken(req) {
+  const headerToken = req.headers["x-scp-access-token"];
+  if (typeof headerToken === "string" && headerToken.trim()) return headerToken.trim();
+  const cookies = parseCookies(req);
+  return cookies.scp_access || null;
+}
+
+function getAccessGrant(req, pathname, ctx) {
+  const token = getAccessToken(req);
+  if (!token) return null;
+  const grant = ctx.accessGrants.get(token);
+  if (!grant) return null;
+  if (grant.expiresAt <= now()) {
+    ctx.accessGrants.delete(token);
+    return null;
+  }
+  if (grant.path !== pathname) return null;
+  return { token, expiresAt: grant.expiresAt };
+}
+
+function issueAccessGrant(res, pathname, ctx) {
+  const token = randomId("acc");
+  const expiresAt = now() + ctx.payOnceTtlSec;
+  ctx.accessGrants.set(token, { path: pathname, expiresAt });
+  res.setHeader(
+    "Set-Cookie",
+    `scp_access=${encodeURIComponent(token)}; Max-Age=${ctx.payOnceTtlSec}; Path=/; HttpOnly; SameSite=Lax`
+  );
+  return { token, expiresAt };
 }
 
 function resolveResourceUrl(req) {
@@ -196,7 +257,8 @@ async function handle(req, res, ctx) {
       network: `eip155:${chainId}`,
       payee: PAYEE_ADDRESS,
       meowPriceEth: PRICE_ETH,
-      meowPriceWei: amountWei
+      meowPriceWei: amountWei,
+      paymentMode: ctx.paymentMode
     });
   }
 
@@ -206,14 +268,33 @@ async function handle(req, res, ctx) {
 
   if (req.method === "GET" && u.pathname === "/meow") {
     const payment = parsePaymentHeader(req);
-    if (!payment) return issue402(req, res, ctx);
+    if (!payment) {
+      if (ctx.paymentMode === "pay_once") {
+        const grant = getAccessGrant(req, "/meow", ctx);
+        if (grant) {
+          return sendJson(res, 200, {
+            ok: true,
+            meow: "meow",
+            access: { mode: "pay_once", token: grant.token, expiresAt: grant.expiresAt }
+          });
+        }
+      }
+      return issue402(req, res, ctx);
+    }
 
     const checked = await validateHubPayment(payment, ctx);
     if (!checked.ok) return sendJson(res, 402, { error: checked.error, retryable: false });
 
+    let access = null;
+    if (ctx.paymentMode === "pay_once") {
+      access = issueAccessGrant(res, "/meow", ctx);
+      access.mode = "pay_once";
+    }
+
     return sendJson(res, 200, {
       ok: true,
       meow: "meow",
+      ...(access ? { access } : {}),
       receipt: {
         invoiceId: payment.invoiceId,
         paymentId: payment.paymentId,
@@ -229,6 +310,9 @@ async function handle(req, res, ctx) {
 function createMeowServer() {
   const ctx = {
     invoices: new Map(),
+    accessGrants: new Map(),
+    payOnceTtlSec: PAY_ONCE_TTL_SEC,
+    paymentMode: PAYMENT_MODE,
     hubAddressCache: new Map(),
     http: new HttpJsonClient({ timeoutMs: 8000, maxSockets: 64 })
   };
@@ -249,6 +333,7 @@ if (require.main === module) {
     console.log(`  price: ${PRICE_ETH} ETH (${amountWei} wei)`);
     console.log(`  network: eip155:${chainId}`);
     console.log(`  hub: ${HUB_NAME} @ ${HUB_ENDPOINT}`);
+    console.log(`  payment mode: ${PAYMENT_MODE}`);
   });
 }
 

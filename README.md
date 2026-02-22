@@ -149,7 +149,13 @@ Use this profile for real usage (not local demo).
   - `OFFERS_FILE` (networks/assets/modes/prices)
   - `pathPrices` in `OFFERS_FILE` sets per-route prices in human units by asset.
     Example: `"/weather": { "usdc": "0.50", "eth": "0.005" }` means `/weather` costs either `0.50 USDC` or `0.005 ETH`.
+  - Optional `pathPaymentModes` in `OFFERS_FILE` sets per-path payment behavior (`per_request` or `pay_once`).
+    Example: `"/meow": "pay_once"` means first successful payment unlocks `/meow` until TTL.
   - `HUB_URL` and `HUB_NAME` only if offering hub route
+  - `PAYMENT_MODE`:
+    - `per_request` (default): payer includes payment proof on each paid request.
+    - `pay_once`: payer pays once, then reuses returned access token/cookie for that path.
+  - `PAY_ONCE_TTL_SEC` (default `86400`) access grant lifetime when `PAYMENT_MODE=pay_once`.
 
 ### Hub (Only If You Operate Hub Infrastructure)
 
@@ -466,6 +472,7 @@ OFFERS_FILE=./offers.example.json
 `offers.example.json` drives:
 - accepted networks/assets/modes (`offers[]`)
 - per-path pricing (`pathPrices`)
+- optional per-path payment behavior (`pathPaymentModes`)
 
 Example:
 
@@ -483,7 +490,13 @@ Example:
   ],
   "pathPrices": {
     "/weather": { "usdc": "0.50", "eth": "0.005" },
+    "/meow": { "usdc": "0.30", "eth": "0.003" },
     "/boop": { "usdc": "0.20", "eth": "0.002" }
+  },
+  "pathPaymentModes": {
+    "/weather": "per_request",
+    "/boop": "pay_once",
+    "/meow": "pay_once"
   }
 }
 ```

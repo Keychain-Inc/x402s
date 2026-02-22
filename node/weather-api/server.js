@@ -25,6 +25,15 @@ const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4080);
 const DEFAULT_PRICES = { ETH: "0.005", USDC: "0.50", USDT: "0.50" };
 const VALID_MODES = new Set(["hub", "direct"]);
+const PAYMENT_MODE = String(process.env.WEATHER_PAYMENT_MODE || process.env.PAYMENT_MODE || "per_request").toLowerCase();
+const PAY_ONCE_TTL_SEC = Number(process.env.WEATHER_PAY_ONCE_TTL_SEC || process.env.PAY_ONCE_TTL_SEC || 86400);
+
+if (!["per_request", "pay_once"].includes(PAYMENT_MODE)) {
+  throw new Error("invalid payment mode; use per_request or pay_once");
+}
+if (!Number.isInteger(PAY_ONCE_TTL_SEC) || PAY_ONCE_TTL_SEC <= 0) {
+  throw new Error("invalid pay-once TTL; expected positive integer seconds");
+}
 
 function csvOrArray(v) {
   if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
@@ -149,12 +158,35 @@ function normalizePathAssetPrices(raw, context) {
   return out;
 }
 
+function normalizePathPaymentModes(raw, context) {
+  if (!raw) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`${context} must be an object like {"/path":"per_request|pay_once"}`);
+  }
+  const out = {};
+  for (const [pathname, modeRaw] of Object.entries(raw)) {
+    if (!pathname || pathname[0] !== "/") {
+      throw new Error(`${context} has invalid path "${pathname}"; expected a leading "/"`);
+    }
+    const mode = String(modeRaw || "").trim().toLowerCase();
+    if (!["per_request", "pay_once"].includes(mode)) {
+      throw new Error(`${context}.${pathname} must be per_request or pay_once`);
+    }
+    out[pathname] = mode;
+  }
+  return out;
+}
+
 // Parse offer config from OFFERS_FILE only.
 // OFFERS_FILE must be JSON object with shape:
 // {
 //   "offers": [ ... ],
 //   "pathPrices": {
 //     "/weather": { "usdc": "0.50", "eth": "0.005" }
+//   },
+//   "pathPaymentModes": {
+//     "/weather": "per_request",
+//     "/boop": "pay_once"
 //   }
 // }
 function parseOffers() {
@@ -211,11 +243,13 @@ function parseOffers() {
   const offers = parseStructured(parsed.offers, "OFFERS_FILE.offers");
   if (!offers.length) throw new Error("OFFERS_FILE.offers must include at least one offer block");
   const pathAssetPrices = normalizePathAssetPrices(parsed.pathPrices, "OFFERS_FILE.pathPrices");
-  return { nets: offers, pathAssetPrices };
+  const pathPaymentModes = normalizePathPaymentModes(parsed.pathPaymentModes, "OFFERS_FILE.pathPaymentModes");
+  return { nets: offers, pathAssetPrices, pathPaymentModes };
 }
 const OFFER_CONFIG = parseOffers();
 const NETS = OFFER_CONFIG.nets;
 const PATH_ASSET_PRICES = OFFER_CONFIG.pathAssetPrices;
+const PATH_PAYMENT_MODES = OFFER_CONFIG.pathPaymentModes;
 
 const PAYEE_KEY = process.env.PAYEE_PRIVATE_KEY;
 if (!PAYEE_KEY) {
@@ -300,7 +334,60 @@ function parsePaymentHeader(req) {
   catch (_e) { return null; }
 }
 
-async function validatePayment(pp, ctx) {
+function parseCookies(req) {
+  const raw = req.headers.cookie;
+  if (!raw || typeof raw !== "string") return {};
+  const out = {};
+  for (const pair of raw.split(";")) {
+    const idx = pair.indexOf("=");
+    if (idx <= 0) continue;
+    const key = pair.slice(0, idx).trim();
+    if (!key) continue;
+    try {
+      out[key] = decodeURIComponent(pair.slice(idx + 1).trim());
+    } catch (_e) {
+      out[key] = pair.slice(idx + 1).trim();
+    }
+  }
+  return out;
+}
+
+function getAccessToken(req) {
+  const headerToken = req.headers["x-scp-access-token"];
+  if (typeof headerToken === "string" && headerToken.trim()) return headerToken.trim();
+  const cookies = parseCookies(req);
+  return cookies.scp_access || null;
+}
+
+function getAccessGrant(req, pathname, ctx) {
+  const token = getAccessToken(req);
+  if (!token) return null;
+  const grant = ctx.accessGrants.get(token);
+  if (!grant) return null;
+  if (grant.expiresAt <= now()) {
+    ctx.accessGrants.delete(token);
+    return null;
+  }
+  if (grant.path !== pathname) return null;
+  return { token, expiresAt: grant.expiresAt };
+}
+
+function issueAccessGrant(res, pathname, ctx) {
+  const token = randomId("acc");
+  const expiresAt = now() + ctx.payOnceTtlSec;
+  ctx.accessGrants.set(token, { path: pathname, expiresAt });
+  res.setHeader(
+    "Set-Cookie",
+    `scp_access=${encodeURIComponent(token)}; Max-Age=${ctx.payOnceTtlSec}; Path=/; HttpOnly; SameSite=Lax`
+  );
+  return { mode: "pay_once", token, expiresAt };
+}
+
+function paymentModeForPath(pathname, ctx) {
+  return ctx.pathPaymentModes[pathname] || ctx.paymentMode;
+}
+
+async function validatePayment(pp, ctx, expectedPath) {
   if (!pp) return { ok: false, error: "no payment" };
 
   if (pp.scheme === "statechannel-hub-v1") {
@@ -311,6 +398,7 @@ async function validatePayment(pp, ctx) {
 
     const inv = ctx.invoices.get(pp.invoiceId);
     if (!inv) return { ok: false, error: "unknown invoice" };
+    if (expectedPath && inv.path !== expectedPath) return { ok: false, error: "invoice path mismatch" };
     const hubEndpoint = inv.hubEndpoint;
     if (!hubEndpoint) return { ok: false, error: "missing hub endpoint" };
 
@@ -344,6 +432,7 @@ async function validatePayment(pp, ctx) {
 
     const inv = ctx.invoices.get(pp.invoiceId);
     if (!inv) return { ok: false, error: "unknown invoice" };
+    if (expectedPath && inv.path !== expectedPath) return { ok: false, error: "invoice path mismatch" };
     if (inv.amount !== dp.amount) return { ok: false, error: "amount mismatch" };
     if (inv.asset && String(inv.asset).toLowerCase() !== String(dp.asset || "").toLowerCase()) {
       return { ok: false, error: "asset mismatch" };
@@ -376,6 +465,7 @@ function send402(res, pathname, resource, ctx, extra) {
       const invoiceId = randomId("inv");
       ctx.invoices.set(invoiceId, {
         createdAt: now(),
+        path: pathname,
         amount: raw,
         asset: asset.asset,
         network: net.caip2,
@@ -419,22 +509,36 @@ async function handle(req, res, ctx) {
   const u = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
 
   if (req.method === "GET" && u.pathname === "/health") {
-    return sendJson(res, 200, { ok: true, payee: PAYEE_ADDRESS });
+    return sendJson(res, 200, {
+      ok: true,
+      payee: PAYEE_ADDRESS,
+      paymentMode: ctx.paymentMode,
+      pathPaymentModes: ctx.pathPaymentModes
+    });
   }
 
   // Weather endpoint
   if (req.method === "GET" && u.pathname === "/weather") {
     const city = u.searchParams.get("city");
     if (!city) return sendJson(res, 400, { error: "city parameter required" });
+    const routePaymentMode = paymentModeForPath("/weather", ctx);
 
     const pp = parsePaymentHeader(req);
+    let access = null;
     if (!pp) {
-      const resource = `http://${HOST}:${PORT}/weather?city=${encodeURIComponent(city)}`;
-      return send402(res, "/weather", resource, ctx, { city });
+      if (routePaymentMode === "pay_once") {
+        const grant = getAccessGrant(req, "/weather", ctx);
+        if (grant) access = { mode: "pay_once", token: grant.token, expiresAt: grant.expiresAt };
+      }
+      if (!access) {
+        const resource = `http://${HOST}:${PORT}/weather?city=${encodeURIComponent(city)}`;
+        return send402(res, "/weather", resource, ctx, { city });
+      }
+    } else {
+      const result = await validatePayment(pp, ctx, "/weather");
+      if (!result.ok) return sendJson(res, 402, { error: result.error, retryable: false });
+      if (routePaymentMode === "pay_once") access = issueAccessGrant(res, "/weather", ctx);
     }
-
-    const result = await validatePayment(pp, ctx);
-    if (!result.ok) return sendJson(res, 402, { error: result.error, retryable: false });
 
     const geo = await geocode(city);
     if (!geo) return sendJson(res, 404, { error: "city not found", city });
@@ -454,22 +558,34 @@ async function handle(req, res, ctx) {
         pressure: cur.surface_pressure
       },
       units: weather.current_units,
-      receipt: { paymentId: pp.paymentId, receiptId: randomId("rcpt"), acceptedAt: now() }
+      ...(access ? { access } : {}),
+      ...(pp ? { receipt: { paymentId: pp.paymentId, receiptId: randomId("rcpt"), acceptedAt: now() } } : {})
     });
   }
 
   // Generic paid endpoint — any path in OFFERS_FILE.pathPrices gets a 402 paywall
   if (req.method === "GET" && PATH_ASSET_PRICES[u.pathname]) {
+    const routePaymentMode = paymentModeForPath(u.pathname, ctx);
     const pp = parsePaymentHeader(req);
+    let access = null;
     if (!pp) {
-      const resource = `http://${HOST}:${PORT}${u.pathname}`;
-      return send402(res, u.pathname, resource, ctx);
+      if (routePaymentMode === "pay_once") {
+        const grant = getAccessGrant(req, u.pathname, ctx);
+        if (grant) access = { mode: "pay_once", token: grant.token, expiresAt: grant.expiresAt };
+      }
+      if (!access) {
+        const resource = `http://${HOST}:${PORT}${u.pathname}`;
+        return send402(res, u.pathname, resource, ctx);
+      }
+    } else {
+      const result = await validatePayment(pp, ctx, u.pathname);
+      if (!result.ok) return sendJson(res, 402, { error: result.error, retryable: false });
+      if (routePaymentMode === "pay_once") access = issueAccessGrant(res, u.pathname, ctx);
     }
-    const result = await validatePayment(pp, ctx);
-    if (!result.ok) return sendJson(res, 402, { error: result.error, retryable: false });
     return sendJson(res, 200, {
       ok: true, path: u.pathname,
-      receipt: { paymentId: pp.paymentId, receiptId: randomId("rcpt"), acceptedAt: now() }
+      ...(access ? { access } : {}),
+      ...(pp ? { receipt: { paymentId: pp.paymentId, receiptId: randomId("rcpt"), acceptedAt: now() } } : {})
     });
   }
 
@@ -477,8 +593,24 @@ async function handle(req, res, ctx) {
 }
 
 function createWeatherServer(options = {}) {
+  const mode = String(options.paymentMode || PAYMENT_MODE).toLowerCase();
+  if (!["per_request", "pay_once"].includes(mode)) {
+    throw new Error("invalid payment mode; use per_request or pay_once");
+  }
+  const payOnceTtlSec = Number(options.payOnceTtlSec || PAY_ONCE_TTL_SEC);
+  if (!Number.isInteger(payOnceTtlSec) || payOnceTtlSec <= 0) {
+    throw new Error("invalid pay-once TTL; expected positive integer seconds");
+  }
+  const pathPaymentModes = normalizePathPaymentModes(
+    options.pathPaymentModes || PATH_PAYMENT_MODES,
+    "pathPaymentModes"
+  );
   const ctx = {
     invoices: new Map(),
+    accessGrants: new Map(),
+    paymentMode: mode,
+    pathPaymentModes,
+    payOnceTtlSec,
     directChannels: new Map(),
     hubAddressCache: new Map(),
     http: new HttpJsonClient({ timeoutMs: 8000, maxSockets: 64 })
@@ -509,6 +641,11 @@ if (require.main === module) {
     if (pricedPaths.length) {
       console.log(`  paid paths: ${pricedPaths.join(", ")}`);
     }
+    const modeEntries = Object.entries(PATH_PAYMENT_MODES);
+    if (modeEntries.length) {
+      console.log(`  path payment modes: ${modeEntries.map(([p, m]) => `${p}=${m}`).join(", ")}`);
+    }
+    console.log(`  payment mode: ${PAYMENT_MODE}`);
   });
 }
 

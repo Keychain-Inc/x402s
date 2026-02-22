@@ -20,6 +20,8 @@ const DEFAULTS = {
   resourcePath: "/v1/data",
   routes: null, // { "/v1/data": { price: "1000000" }, "/v1/premium": { price: "5000000" } }
   perfMode: process.env.PERF_MODE === "1",
+  paymentMode: String(process.env.PAYEE_PAYMENT_MODE || process.env.PAYMENT_MODE || "per_request").toLowerCase(),
+  payOnceTtlSec: Number(process.env.PAYEE_PAY_ONCE_TTL_SEC || process.env.PAY_ONCE_TTL_SEC || 86400),
   payeePrivateKey: process.env.PAYEE_PRIVATE_KEY || null
 };
 if (!DEFAULTS.payeePrivateKey) {
@@ -81,6 +83,7 @@ function makeOffers(cfg, payeeAddress, routePath, routeCfg, invoiceStore) {
     const invoiceId = randomId("inv");
     invoiceStore.set(invoiceId, {
       createdAt: now(),
+      path: routePath || cfg.resourcePath,
       amount: price,
       asset,
       network,
@@ -142,6 +145,55 @@ function getPaymentHeader(req) {
   return req.headers["payment-signature"] || req.headers["PAYMENT-SIGNATURE"] || null;
 }
 
+function parseCookies(req) {
+  const raw = req.headers.cookie;
+  if (!raw || typeof raw !== "string") return {};
+  const out = {};
+  for (const pair of raw.split(";")) {
+    const idx = pair.indexOf("=");
+    if (idx <= 0) continue;
+    const key = pair.slice(0, idx).trim();
+    if (!key) continue;
+    try {
+      out[key] = decodeURIComponent(pair.slice(idx + 1).trim());
+    } catch (_e) {
+      out[key] = pair.slice(idx + 1).trim();
+    }
+  }
+  return out;
+}
+
+function getAccessToken(req) {
+  const headerToken = req.headers["x-scp-access-token"];
+  if (typeof headerToken === "string" && headerToken.trim()) return headerToken.trim();
+  const cookies = parseCookies(req);
+  return cookies.scp_access || null;
+}
+
+function getAccessGrant(req, pathname, ctx) {
+  const token = getAccessToken(req);
+  if (!token) return null;
+  const grant = ctx.accessGrants.get(token);
+  if (!grant) return null;
+  if (grant.expiresAt <= now()) {
+    ctx.accessGrants.delete(token);
+    return null;
+  }
+  if (grant.path !== pathname) return null;
+  return { token, expiresAt: grant.expiresAt };
+}
+
+function issueAccessGrant(res, pathname, ctx) {
+  const token = randomId("acc");
+  const expiresAt = now() + ctx.cfg.payOnceTtlSec;
+  ctx.accessGrants.set(token, { path: pathname, expiresAt });
+  res.setHeader(
+    "Set-Cookie",
+    `scp_access=${encodeURIComponent(token)}; Max-Age=${ctx.cfg.payOnceTtlSec}; Path=/; HttpOnly; SameSite=Lax`
+  );
+  return { mode: "pay_once", token, expiresAt };
+}
+
 function verifyWebhookSig(payload, secret, sigHeader) {
   if (!sigHeader || !secret) return false;
   const expected = "sha256=" + crypto.createHmac("sha256", secret).update(payload).digest("hex");
@@ -178,6 +230,7 @@ async function handle(req, res, ctx) {
   }
 
   const rawHeader = getPaymentHeader(req);
+  const expectedPath = isPay ? null : u.pathname;
   if (!rawHeader) {
     if (isPay) {
       const allOffers = [];
@@ -187,12 +240,23 @@ async function handle(req, res, ctx) {
       }
       return sendJson(res, 200, { accepts: allOffers });
     }
+    if (cfg.paymentMode === "pay_once") {
+      const grant = getAccessGrant(req, u.pathname, ctx);
+      if (grant) {
+        return sendJson(res, 200, {
+          ok: true,
+          data: { value: "premium-resource", payee: payeeAddress },
+          access: { mode: "pay_once", token: grant.token, expiresAt: grant.expiresAt }
+        });
+      }
+    }
     return sendJson(res, 402, makeOffers(cfg, payeeAddress, u.pathname, matchedRoute, invoiceStore));
   }
 
   const invoiceLookup = (invoiceId, paymentProof) => {
     const inv = invoiceStore.get(invoiceId);
     if (!inv) return false;
+    if (expectedPath && inv.path && inv.path !== expectedPath) return false;
     if (!paymentProof) return true;
     if (inv.amount && paymentProof.amount !== inv.amount) return false;
     if (inv.asset && String(paymentProof.asset || "").toLowerCase() !== String(inv.asset).toLowerCase()) return false;
@@ -204,6 +268,17 @@ async function handle(req, res, ctx) {
 
   if (!result.ok) {
     return sendJson(res, 402, { error: result.error, retryable: false });
+  }
+
+  let access = null;
+  if (cfg.paymentMode === "pay_once") {
+    let grantPath = u.pathname;
+    if (isPay) {
+      const invoiceId = result.scheme === "direct" ? result.direct.invoiceId : result.ticket.invoiceId;
+      const inv = invoiceStore.get(invoiceId);
+      if (inv && inv.path) grantPath = inv.path;
+    }
+    access = issueAccessGrant(res, grantPath, ctx);
   }
 
   const receipt = {
@@ -219,6 +294,7 @@ async function handle(req, res, ctx) {
   const payload = {
     ok: true,
     data: { value: "premium-resource", payee: payeeAddress },
+    ...(access ? { access } : {}),
     receipt
   };
   consumed.set(result.paymentId, payload);
@@ -230,6 +306,12 @@ function createPayeeServer(options = {}) {
     ...DEFAULTS,
     ...options
   };
+  if (!["per_request", "pay_once"].includes(cfg.paymentMode)) {
+    throw new Error("invalid payment mode; use per_request or pay_once");
+  }
+  if (!Number.isInteger(cfg.payOnceTtlSec) || cfg.payOnceTtlSec <= 0) {
+    throw new Error("invalid pay-once TTL; expected positive integer seconds");
+  }
   const payeeWallet = new ethers.Wallet(cfg.payeePrivateKey);
   const payeeAddress = payeeWallet.address;
   const invoiceStore = new Map();
@@ -239,6 +321,7 @@ function createPayeeServer(options = {}) {
     payeeAddress,
     invoiceStore,
     consumed,
+    accessGrants: new Map(),
     directChannels: new Map(),
     hubUrls: collectHubUrls(cfg),
     http: new HttpJsonClient({ timeoutMs: 8000, maxSockets: 128 })
