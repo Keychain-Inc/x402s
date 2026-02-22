@@ -47,6 +47,19 @@ These require payee-signed headers:
 
 Signature must recover to the `payee` address in request body and is bound to method + path + canonical JSON body.
 
+`POST /v1/payee/settle` also supports idempotency keys to prevent duplicate payouts on retries:
+
+- Header: `Idempotency-Key: <key>`
+- Body: `{ "idempotencyKey": "<key>" }`
+- Key format: `[A-Za-z0-9:_-]{6,128}`
+
+When an idempotency key is reused for the same `(payee, asset)` scope:
+
+- completed settlement returns the original settlement response (`idempotentReplay: true`)
+- pending or failed settlement returns `409`
+
+Settlement transfers wait for 1 confirmation and require successful receipt status.
+
 - When `HUB_ADMIN_TOKEN` is configured, admin routes require `Authorization: Bearer <HUB_ADMIN_TOKEN>` (or `x-scp-admin-token`):
   - `POST /v1/events/emit`
   - `GET /v1/events`

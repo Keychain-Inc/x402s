@@ -95,11 +95,15 @@ describe("SCP Deep Stack", function () {
     const quote = await reqJson("POST", `${HUB_URL}/v1/tickets/quote`, quoteReq);
     expect(quote.statusCode).to.eq(200);
 
+    const startingTotal = 1000000000n;
+    const totalDebit = BigInt(quote.body.totalDebit);
+    expect(totalDebit > 0n).to.eq(true);
+    expect(totalDebit < startingTotal).to.eq(true);
     const state = {
       channelId: quoteReq.channelId,
       stateNonce: 1,
-      balA: "999000000",
-      balB: "1000",
+      balA: (startingTotal - totalDebit).toString(),
+      balB: totalDebit.toString(),
       locksRoot: "0x0000000000000000000000000000000000000000000000000000000000000000",
       stateExpiry: Math.floor(Date.now() / 1000) + 120,
       contextHash: "0x5f4cf45e4c1533216f69fcf4f6864db7a0b1f14f9788c61f2604961e59fb745f"
@@ -869,6 +873,7 @@ describe("SCP Deep Stack", function () {
     // C4: refund now requires a real issued ticket — create one first
     const bundle = await makeValidPaymentBundle(`pay_refund_${Date.now()}`);
     const ticketId = bundle.issue.ticketId;
+    const totalDebit = BigInt(bundle.quote.totalDebit);
     const refund = await reqJson("POST", `${HUB_URL}/v1/refunds`, {
       ticketId,
       refundAmount: bundle.quote.ticketDraft.amount,
@@ -876,6 +881,21 @@ describe("SCP Deep Stack", function () {
     });
     expect(refund.statusCode).to.eq(200);
     expect(refund.body.amount).to.eq(bundle.quote.ticketDraft.amount);
+    expect(refund.body.refundedTotalDebit).to.eq(bundle.quote.totalDebit);
+    expect(refund.body.channelState).to.be.an("object");
+    expect(refund.body.channelAck).to.be.an("object");
+
+    const hubInfo = await reqJson("GET", `${HUB_URL}/.well-known/x402`);
+    expect(hubInfo.statusCode).to.eq(200);
+    const refundSigner = recoverChannelStateSigner(refund.body.channelState, refund.body.channelAck.sigB);
+    expect(refundSigner.toLowerCase()).to.eq(hubInfo.body.address.toLowerCase());
+    expect(refund.body.channelAck.stateHash).to.eq(hashChannelState(refund.body.channelState));
+
+    const ch = await reqJson("GET", `${HUB_URL}/v1/channels/${encodeURIComponent(bundle.state.channelId)}`);
+    expect(ch.statusCode).to.eq(200);
+    expect(Number(ch.body.latestNonce)).to.eq(Number(bundle.state.stateNonce) + 1);
+    expect(ch.body.latestState.balA).to.eq((BigInt(bundle.state.balA) + totalDebit).toString());
+    expect(ch.body.latestState.balB).to.eq((BigInt(bundle.state.balB) - totalDebit).toString());
 
     const events = await reqJson("GET", `${HUB_URL}/v1/events?since=0&limit=100`);
     expect(events.statusCode).to.eq(200);
