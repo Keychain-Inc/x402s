@@ -192,6 +192,135 @@ describe("SCP Deep Stack", function () {
     expect(result.response.receipt).to.have.property("paymentId");
   });
 
+  it("agent keeps local hub state unchanged if ticket issue fails", async function () {
+    const isolatedStateDir = path.resolve(
+      __dirname,
+      `../node/scp-agent/state/deep-test-issue-fail-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    );
+    fs.mkdirSync(isolatedStateDir, { recursive: true });
+    const agent = new ScpAgentClient({
+      privateKey: ethers.Wallet.createRandom().privateKey,
+      devMode: true,
+      stateDir: isolatedStateDir,
+      networkAllowlist: ["eip155:8453"],
+      maxFeeDefault: "5000",
+      maxAmountDefault: "5000000"
+    });
+    try {
+      const first = await reqJson("GET", PAYEE_URL);
+      expect(first.statusCode).to.eq(402);
+      const offer = first.body.accepts.find((o) => o.scheme === "statechannel-hub-v1");
+      const ext = offer.extensions["statechannel-hub-v1"];
+
+      const channel = agent.channelForHub(HUB_URL);
+      const before = { nonce: channel.nonce, balA: channel.balA, balB: channel.balB };
+      const contextHash = "0x5f4cf45e4c1533216f69fcf4f6864db7a0b1f14f9788c61f2604961e59fb745f";
+      const quoteReq = {
+        invoiceId: ext.invoiceId,
+        paymentId: `pay_issue_fail_${Date.now()}`,
+        // Intentionally mismatch quote channelId with local channel to force /issue rejection.
+        channelId: ethers.utils.hexlify(crypto.randomBytes(32)),
+        payee: ext.payeeAddress,
+        asset: offer.asset,
+        amount: offer.maxAmountRequired,
+        maxFee: "5000",
+        quoteExpiry: Math.floor(Date.now() / 1000) + 120,
+        contextHash
+      };
+
+      let failed = false;
+      try {
+        await agent.quoteAndIssueHubTicket(HUB_URL, contextHash, quoteReq);
+      } catch (err) {
+        failed = true;
+        expect(String(err.message || err)).to.contain("issue failed");
+      }
+      expect(failed).to.eq(true);
+
+      const after = agent.channelForHub(HUB_URL);
+      expect(after.nonce).to.eq(before.nonce);
+      expect(after.balA).to.eq(before.balA);
+      expect(after.balB).to.eq(before.balB);
+    } finally {
+      agent.close();
+      fs.rmSync(isolatedStateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("agent rejects hub issue ack signed by wrong key", async function () {
+    const isolatedStateDir = path.resolve(
+      __dirname,
+      `../node/scp-agent/state/deep-test-bad-sigb-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    );
+    fs.mkdirSync(isolatedStateDir, { recursive: true });
+    const agent = new ScpAgentClient({
+      privateKey: ethers.Wallet.createRandom().privateKey,
+      devMode: true,
+      stateDir: isolatedStateDir,
+      networkAllowlist: ["eip155:8453"],
+      maxFeeDefault: "5000",
+      maxAmountDefault: "5000000"
+    });
+    try {
+      const first = await reqJson("GET", PAYEE_URL);
+      expect(first.statusCode).to.eq(402);
+      const offer = first.body.accepts.find((o) => o.scheme === "statechannel-hub-v1");
+      const ext = offer.extensions["statechannel-hub-v1"];
+
+      const channel = agent.channelForHub(HUB_URL);
+      const before = { nonce: channel.nonce, balA: channel.balA, balB: channel.balB };
+      const contextHash = "0x5f4cf45e4c1533216f69fcf4f6864db7a0b1f14f9788c61f2604961e59fb745f";
+      const quoteReq = {
+        invoiceId: ext.invoiceId,
+        paymentId: `pay_bad_sigb_${Date.now()}`,
+        channelId: channel.channelId,
+        payee: ext.payeeAddress,
+        asset: offer.asset,
+        amount: offer.maxAmountRequired,
+        maxFee: "5000",
+        quoteExpiry: Math.floor(Date.now() / 1000) + 120,
+        contextHash
+      };
+
+      const badHubWallet = ethers.Wallet.createRandom();
+      const originalRequest = agent.http.request.bind(agent.http);
+      agent.http.request = async (method, endpoint, body, headers) => {
+        const res = await originalRequest(method, endpoint, body, headers);
+        if (method === "POST" && endpoint === `${HUB_URL}/v1/tickets/issue` && res.statusCode === 200) {
+          const forgedSigB = await signChannelState(body.channelState, badHubWallet);
+          return {
+            ...res,
+            body: {
+              ...res.body,
+              channelAck: {
+                ...(res.body.channelAck || {}),
+                sigB: forgedSigB
+              }
+            }
+          };
+        }
+        return res;
+      };
+
+      let failed = false;
+      try {
+        await agent.quoteAndIssueHubTicket(HUB_URL, contextHash, quoteReq);
+      } catch (err) {
+        failed = true;
+        expect(String(err.message || err)).to.contain("channelAck signer mismatch");
+      }
+      expect(failed).to.eq(true);
+
+      const after = agent.channelForHub(HUB_URL);
+      expect(after.nonce).to.eq(before.nonce);
+      expect(after.balA).to.eq(before.balA);
+      expect(after.balB).to.eq(before.balB);
+    } finally {
+      agent.close();
+      fs.rmSync(isolatedStateDir, { recursive: true, force: true });
+    }
+  });
+
   it("enforces maxFee policy at agent", async function () {
     const agent = new ScpAgentClient({
       privateKey: TEST_AGENT_KEY,

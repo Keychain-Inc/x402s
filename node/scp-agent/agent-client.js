@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { ethers } = require("ethers");
-const { hashChannelState, signChannelState } = require("../scp-hub/state-signing");
+const { hashChannelState, signChannelState, recoverChannelStateSigner } = require("../scp-hub/state-signing");
 const { HttpJsonClient } = require("../scp-common/http-client");
 const { resolveAsset, resolveNetwork, resolveHubEndpointForNetwork, toCaip2, ASSETS } = require("../scp-common/networks");
 
@@ -378,19 +378,33 @@ class ScpAgentClient {
       );
     }
 
-    ch.nonce += 1;
-    ch.balA = (balA - debit).toString();
-    ch.balB = (balB + debit).toString();
-    this.persist();
+    const nextNonce = Number(ch.nonce) + 1;
+    const nextBalA = (balA - debit).toString();
+    const nextBalB = (balB + debit).toString();
     return {
       channelId: ch.channelId,
-      stateNonce: ch.nonce,
-      balA: ch.balA,
-      balB: ch.balB,
+      stateNonce: nextNonce,
+      balA: nextBalA,
+      balB: nextBalB,
       locksRoot: ZERO32,
       stateExpiry: now() + 120,
       contextHash
     };
+  }
+
+  commitChannelState(channelKey, state) {
+    const ch = this.channelForKey(channelKey);
+    if (!ch) throw new Error(`Channel ${channelKey} not found`);
+    if (String(ch.channelId).toLowerCase() !== String(state.channelId).toLowerCase()) {
+      throw new Error("channel state channelId mismatch");
+    }
+    const expectedNonce = Number(ch.nonce) + 1;
+    if (Number(state.stateNonce) !== expectedNonce) {
+      throw new Error(`channel nonce mismatch (expected ${expectedNonce}, got ${state.stateNonce})`);
+    }
+    ch.nonce = Number(state.stateNonce);
+    ch.balA = String(state.balA);
+    ch.balB = String(state.balB);
   }
 
   async discoverOffers(resourceUrl) {
@@ -712,7 +726,8 @@ class ScpAgentClient {
       throw new Error(`quote failed: ${quote.statusCode} ${JSON.stringify(quote.body)}`);
     }
 
-    const state = this.nextChannelState(`hub:${hubEndpoint}`, quote.body.totalDebit, contextHash);
+    const channelKey = `hub:${hubEndpoint}`;
+    const state = this.nextChannelState(channelKey, quote.body.totalDebit, contextHash);
     const sigA = await signChannelState(state, this.wallet);
     const issueReq = { quote: quote.body, channelState: state, sigA };
     const issued = await this.http.request("POST", `${hubEndpoint}/v1/tickets/issue`, issueReq);
@@ -723,10 +738,39 @@ class ScpAgentClient {
     const issuedTicket = { ...issued.body };
     const channelAck = issuedTicket.channelAck || {};
     delete issuedTicket.channelAck;
+    if (!channelAck || !channelAck.sigB) {
+      throw new Error("issue failed: missing channelAck.sigB");
+    }
+    if (Number(channelAck.stateNonce) !== Number(state.stateNonce)) {
+      throw new Error(
+        `issue failed: channelAck nonce mismatch (${channelAck.stateNonce} != ${state.stateNonce})`
+      );
+    }
+    const localStateHash = hashChannelState(state);
+    if (String(channelAck.stateHash || "").toLowerCase() !== localStateHash.toLowerCase()) {
+      throw new Error("issue failed: channelAck stateHash mismatch");
+    }
+    let recoveredHub;
+    try {
+      recoveredHub = recoverChannelStateSigner(state, channelAck.sigB);
+    } catch (_e) {
+      throw new Error("issue failed: invalid hub signature on channelAck");
+    }
+    const expectedHub = String(quote.body.ticketDraft?.hub || issuedTicket.hub || "").toLowerCase();
+    if (!expectedHub) {
+      throw new Error("issue failed: missing expected hub signer");
+    }
+    if (recoveredHub.toLowerCase() !== expectedHub) {
+      throw new Error(
+        `issue failed: channelAck signer mismatch (${recoveredHub} != ${expectedHub})`
+      );
+    }
+    this.commitChannelState(channelKey, state);
+    this.persist();
     return {
       quote: quote.body,
       state,
-      stateHash: hashChannelState(state),
+      stateHash: localStateHash,
       sigA,
       issuedTicket,
       channelAck
@@ -921,6 +965,7 @@ class ScpAgentClient {
       rejectionPrefix: "payee rejected direct payment"
     });
 
+    this.commitChannelState(`direct:${ext.payeeAddress.toLowerCase()}`, state);
     this.persistDirectPayment(paymentId, {
       resourceUrl: targetUrl,
       invoiceId,
@@ -1212,6 +1257,7 @@ class ScpAgentClient {
         paymentPayload,
         rejectionPrefix: "direct payment failed"
       });
+      this.commitChannelState(ch.key, state);
       this.persistDirectPayment(paymentId, { payee: payeeAddress, amount });
       return { route: "direct", payee: payeeAddress, amount, response };
     }
