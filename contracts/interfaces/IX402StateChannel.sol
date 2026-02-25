@@ -22,6 +22,7 @@ interface IX402StateChannel {
         bool isClosing;
         uint64 closeDeadline;
         uint64 latestNonce;
+        uint8 hubFlags; // 0=none, 1=A is hub, 2=B is hub, 3=both
     }
 
     event ChannelOpened(
@@ -67,6 +68,16 @@ interface IX402StateChannel {
         uint64 challengePeriodSec,
         uint64 channelExpiry,
         bytes32 salt
+    ) external payable returns (bytes32 channelId);
+
+    function openChannelWithHub(
+        address participantB,
+        address asset,
+        uint256 amount,
+        uint64 challengePeriodSec,
+        uint64 channelExpiry,
+        bytes32 salt,
+        uint8 hubFlags
     ) external payable returns (bytes32 channelId);
 
     function deposit(bytes32 channelId, uint256 amount) external payable;

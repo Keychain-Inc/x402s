@@ -23,6 +23,7 @@ contract X402StateChannel is IX402StateChannel {
         uint64 latestNonce;
         uint256 closeBalA;
         uint256 closeBalB;
+        uint8 hubFlags; // 0=none, 1=A is hub, 2=B is hub, 3=both
     }
 
     mapping(bytes32 => Channel) private _channels;
@@ -55,6 +56,31 @@ contract X402StateChannel is IX402StateChannel {
         uint64 channelExpiry,
         bytes32 salt
     ) external payable override returns (bytes32 channelId) {
+        return _openChannel(participantB, asset, amount, challengePeriodSec, channelExpiry, salt, 0);
+    }
+
+    function openChannelWithHub(
+        address participantB,
+        address asset,
+        uint256 amount,
+        uint64 challengePeriodSec,
+        uint64 channelExpiry,
+        bytes32 salt,
+        uint8 hubFlags
+    ) external payable returns (bytes32 channelId) {
+        require(hubFlags <= 3, "SCP: bad hubFlags");
+        return _openChannel(participantB, asset, amount, challengePeriodSec, channelExpiry, salt, hubFlags);
+    }
+
+    function _openChannel(
+        address participantB,
+        address asset,
+        uint256 amount,
+        uint64 challengePeriodSec,
+        uint64 channelExpiry,
+        bytes32 salt,
+        uint8 hubFlags
+    ) internal returns (bytes32 channelId) {
         require(participantB != address(0), "SCP: bad participantB");
         require(challengePeriodSec > 0, "SCP: bad challenge");
         require(channelExpiry > block.timestamp, "SCP: bad expiry");
@@ -77,7 +103,8 @@ contract X402StateChannel is IX402StateChannel {
             closeDeadline: 0,
             latestNonce: 0,
             closeBalA: 0,
-            closeBalB: 0
+            closeBalB: 0,
+            hubFlags: hubFlags
         });
         _usedChannelIds[channelId] = true;
 
@@ -227,11 +254,8 @@ contract X402StateChannel is IX402StateChannel {
         require(block.timestamp < to.channelExpiry, "SCP: to expired");
         require(from.asset == to.asset, "SCP: asset mismatch");
 
-        // Caller must be participant in both channels
-        require(
-            msg.sender == from.participantA || msg.sender == from.participantB,
-            "SCP: not from participant"
-        );
+        // Caller must be a hub participant in both channels
+        require(_isHub(from, msg.sender), "SCP: not hub in from");
         require(
             msg.sender == to.participantA || msg.sender == to.participantB,
             "SCP: not to participant"
@@ -312,7 +336,8 @@ contract X402StateChannel is IX402StateChannel {
             totalBalance: ch.totalBalance,
             isClosing: ch.isClosing,
             closeDeadline: ch.closeDeadline,
-            latestNonce: ch.latestNonce
+            latestNonce: ch.latestNonce,
+            hubFlags: ch.hubFlags
         });
     }
 
@@ -408,6 +433,12 @@ contract X402StateChannel is IX402StateChannel {
     }
 
     // --- Internals ---
+
+    function _isHub(Channel storage ch, address addr) internal view returns (bool) {
+        if ((ch.hubFlags & 1) != 0 && addr == ch.participantA) return true;
+        if ((ch.hubFlags & 2) != 0 && addr == ch.participantB) return true;
+        return false;
+    }
 
     function _hashTypedData(ChannelState calldata st) internal view returns (bytes32) {
         return hashState(st);
