@@ -25,6 +25,10 @@ const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4080);
 const DEFAULT_PRICES = { ETH: "0.005", USDC: "0.50", USDT: "0.50" };
 const VALID_MODES = new Set(["hub", "direct"]);
+const DEFAULT_STREAM_T_SEC_RAW = Number(process.env.WEATHER_STREAM_T_SEC || process.env.STREAM_T_SEC || 5);
+const DEFAULT_STREAM_T_SEC = Number.isInteger(DEFAULT_STREAM_T_SEC_RAW) && DEFAULT_STREAM_T_SEC_RAW > 0
+  ? DEFAULT_STREAM_T_SEC_RAW
+  : 5;
 const PAYMENT_MODE = String(process.env.WEATHER_PAYMENT_MODE || process.env.PAYMENT_MODE || "per_request").toLowerCase();
 const PAY_ONCE_TTL_SEC = Number(process.env.WEATHER_PAY_ONCE_TTL_SEC || process.env.PAY_ONCE_TTL_SEC || 86400);
 
@@ -196,6 +200,29 @@ function normalizePathPayOnceTtls(raw, context) {
   return out;
 }
 
+function normalizeStreamConfig(raw, context) {
+  if (!raw) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`${context} must be an object like {"amount":"1000000","t":5}`);
+  }
+  const out = {};
+  if (raw.amount !== undefined) {
+    const amount = String(raw.amount || "").trim();
+    if (!/^[0-9]+$/.test(amount)) {
+      throw new Error(`${context}.amount must be a non-negative integer string`);
+    }
+    out.amount = amount;
+  }
+  if (raw.t !== undefined) {
+    const t = Number(raw.t);
+    if (!Number.isInteger(t) || t <= 0) {
+      throw new Error(`${context}.t must be a positive integer number of seconds`);
+    }
+    out.t = t;
+  }
+  return out;
+}
+
 // Parse offer config from OFFERS_FILE only.
 // OFFERS_FILE must be JSON object with shape:
 // {
@@ -227,6 +254,7 @@ function parseOffers() {
       const assets = buildAssets(net.chainId, assetNames, prices, label);
       const hubName = row.hubName;
       const hubEndpoint = row.hubEndpoint || row.hub;
+      const stream = normalizeStreamConfig(row.stream, `${label}.stream`);
       if (modes.includes("hub") && (!hubName || !hubEndpoint)) {
         throw new Error(`${label} requires hubName and hubEndpoint when mode includes "hub"`);
       }
@@ -235,7 +263,8 @@ function parseOffers() {
         assets,
         modes,
         hubName: hubName || null,
-        hubEndpoint: hubEndpoint || null
+        hubEndpoint: hubEndpoint || null,
+        stream
       });
     }
     return nets;
@@ -499,6 +528,10 @@ function send402(res, pathname, resource, ctx, extra) {
       });
       pricing.push({ network: net.name, asset: asset.symbol, price: raw, human, decimals: asset.decimals });
       if (net.modes.includes("hub")) {
+        const streamAmount = (net.stream && net.stream.amount) ? net.stream.amount : raw;
+        const streamT = (net.stream && Number.isInteger(net.stream.t) && net.stream.t > 0)
+          ? net.stream.t
+          : DEFAULT_STREAM_T_SEC;
         offers.push({
           scheme: "statechannel-hub-v1",
           network: net.caip2, asset: asset.asset, maxAmountRequired: raw,
@@ -508,6 +541,7 @@ function send402(res, pathname, resource, ctx, extra) {
             hubEndpoint: net.hubEndpoint,
             mode: "proxy_hold",
             feeModel: { base: "10", bps: 30 }, quoteExpiry: now() + 120,
+            stream: { amount: streamAmount, t: streamT },
             invoiceId, payeeAddress: PAYEE_ADDRESS
           }}
         });

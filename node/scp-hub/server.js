@@ -62,6 +62,9 @@ const RPC_URL = process.env.RPC_URL || "";
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS || "";
 const REDIS_URL = process.env.REDIS_URL || "";
 const HUB_ADMIN_TOKEN = process.env.HUB_ADMIN_TOKEN || "";
+const NODE_ENV = String(process.env.NODE_ENV || "").toLowerCase();
+const IS_PRODUCTION = NODE_ENV === "production";
+const ALLOW_UNSAFE_PROD_STORAGE = process.env.ALLOW_UNSAFE_PROD_STORAGE === "1";
 const PAYEE_AUTH_MAX_SKEW_SEC = Number(process.env.PAYEE_AUTH_MAX_SKEW_SEC || 300);
 const RATE_LIMIT_WINDOW_SEC = Math.max(1, Number(process.env.RATE_LIMIT_WINDOW_SEC || 60));
 const RATE_LIMIT_DEFAULT = Math.max(0, Number(process.env.RATE_LIMIT_DEFAULT || 600));
@@ -87,6 +90,15 @@ const DOMAIN_CONTRACT = (() => {
 })();
 setDomainDefaults(CHAIN_ID, DOMAIN_CONTRACT);
 
+if (IS_PRODUCTION && !REDIS_URL && !ALLOW_UNSAFE_PROD_STORAGE) {
+  console.error(
+    "FATAL: Production mode requires REDIS_URL for hub storage.\n" +
+    "File-backed JSON storage is not production-safe for reliability/concurrency.\n" +
+    "Set REDIS_URL, or set ALLOW_UNSAFE_PROD_STORAGE=1 to override at your own risk."
+  );
+  process.exit(1);
+}
+
 // Provider + funded wallet for on-chain settlement (lazy init)
 let hubSigner = null;
 function getHubSigner() {
@@ -103,8 +115,32 @@ const webhooks = new WebhookManager(store);
 const rateWindow = new Map();
 let lastQuoteSweepAt = 0;
 
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+const CORS_HEADERS = [
+  "Content-Type",
+  "Payment-Signature",
+  "Authorization",
+  "Idempotency-Key",
+  "X-SCP-Access-Token",
+  "X-SCP-Admin-Token",
+  "X-SCP-Payee-Signature",
+  "X-SCP-Payee-Timestamp"
+].join(", ");
+const CORS_METHODS = "GET, POST, PATCH, DELETE, OPTIONS";
+const CORS_EXPOSE_HEADERS = ["Retry-After"].join(", ");
+
+function setCorsHeaders(res) {
+  res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
+  res.setHeader("Access-Control-Allow-Methods", CORS_METHODS);
+  res.setHeader("Access-Control-Allow-Headers", CORS_HEADERS);
+  res.setHeader("Access-Control-Expose-Headers", CORS_EXPOSE_HEADERS);
+  res.setHeader("Access-Control-Max-Age", "86400");
+  res.setHeader("Vary", "Origin");
+}
+
 function sendJson(res, code, payload) {
   const body = JSON.stringify(payload);
+  setCorsHeaders(res);
   res.writeHead(code, {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(body)
@@ -376,6 +412,13 @@ async function sweepExpiredQuotes() {
 
 async function handleRequest(req, res) {
   const { pathname } = url.parse(req.url, true);
+
+  // CORS preflight
+  if (req.method === "OPTIONS") {
+    setCorsHeaders(res);
+    res.writeHead(204);
+    return res.end();
+  }
 
   try {
     if (!enforceRateLimit(req, res, pathname)) return;

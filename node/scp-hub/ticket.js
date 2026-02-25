@@ -310,13 +310,26 @@ function createVerifier({
     // Fallback: single hub path (backward compat)
     const fallbackUrl = hubUrls[0];
     const fallbackAddr = hubMap.size === 1 ? [...hubMap.keys()][0] : null;
+
+    if (!fallbackUrl && !fallbackAddr && !hub) {
+      return { ok: false, error: "no hub verification source configured" };
+    }
+    if (!confirmHub && !fallbackAddr && !hub) {
+      return { ok: false, error: "hub signer unknown while confirmHub=false" };
+    }
+
     return verifyPaymentFull(header, {
       payee, hub: fallbackAddr, hubUrl: confirmHub ? fallbackUrl : null,
       httpClient, invoiceStore, seenPayments, directChannels
     });
   };
 
-  verify.close = () => httpClient.close();
+  verify.close = () => {
+    httpClient.close();
+    if (seenPayments && typeof seenPayments.close === "function") {
+      seenPayments.close();
+    }
+  };
   verify.seenPayments = seenPayments;
   verify.directChannels = directChannels;
   verify.hubMap = hubMap;

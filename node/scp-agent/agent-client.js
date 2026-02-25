@@ -187,6 +187,15 @@ function capKeysForOffer(offer) {
   return [...new Set(out)];
 }
 
+function offerDebitAmount(offer) {
+  const fallback = String((offer || {}).maxAmountRequired || "0");
+  if (!offer || offer.scheme !== "statechannel-hub-v1") return fallback;
+  const ext = ((offer.extensions || {})["statechannel-hub-v1"] || {});
+  const raw = String(((ext.stream || {}).amount ?? "") || "").trim();
+  if (/^[0-9]+$/.test(raw)) return raw;
+  return fallback;
+}
+
 function resolveOfferCap({ explicit, offer, byAsset, fallback }) {
   if (explicit !== undefined && explicit !== null && String(explicit).trim() !== "") {
     return String(explicit).trim();
@@ -462,7 +471,7 @@ class ScpAgentClient {
   }
 
   computeHubFundingPlan(offer, options = {}, hubInfo = null) {
-    const amount = BigInt(offer.maxAmountRequired || "0");
+    const amount = BigInt(offerDebitAmount(offer));
     const fee = hubInfo ? this.computeFee(amount, hubInfo.feePolicy) : 0n;
     const perPaymentDebit = amount + fee;
 
@@ -639,7 +648,7 @@ class ScpAgentClient {
     const directs = filtered.filter((o) => o.scheme === "statechannel-direct-v1");
 
     const offerAmount = (o) => {
-      try { return BigInt(o.maxAmountRequired || "0"); } catch (_e) { return 0n; }
+      try { return BigInt(offerDebitAmount(o)); } catch (_e) { return 0n; }
     };
 
     const rankHub = (o) => {
@@ -825,7 +834,7 @@ class ScpAgentClient {
     const paymentId = options.paymentId || randomId("pay");
     const { method, requestHeaders, requestBody } = this.resolveHttpCallOptions(options);
 
-    const amount = offer.maxAmountRequired;
+    const amount = offerDebitAmount(offer);
     const maxFee = resolveOfferCap({
       explicit: options.maxFee,
       offer,
@@ -911,7 +920,7 @@ class ScpAgentClient {
     const invoiceId = ext.invoiceId || randomId("inv");
     const paymentId = options.paymentId || randomId("pay");
     const { method, requestHeaders, requestBody } = this.resolveHttpCallOptions(options);
-    const amount = offer.maxAmountRequired;
+    const amount = offerDebitAmount(offer);
     this.enforceMaxAmount(amount, offer, options);
 
     const ch = this.channelForDirect(ext.payeeAddress, resourceUrl);

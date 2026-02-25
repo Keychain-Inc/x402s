@@ -196,6 +196,30 @@ describe("SCP Deep Stack", function () {
     expect(result.response.receipt).to.have.property("paymentId");
   });
 
+  it("hub API returns CORS headers for preflight, success, and error responses", async function () {
+    const origin = "http://example.local";
+    const preflight = await reqJson("OPTIONS", `${HUB_URL}/v1/tickets/quote`, null, {
+      origin,
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type,payment-signature,x-scp-payee-signature"
+    });
+    expect(preflight.statusCode).to.eq(204);
+    expect(preflight.headers["access-control-allow-origin"]).to.eq("*");
+    expect(String(preflight.headers["access-control-allow-methods"] || "")).to.include("OPTIONS");
+    expect(String(preflight.headers["access-control-allow-headers"] || "").toLowerCase()).to.include("payment-signature");
+    expect(String(preflight.headers["access-control-expose-headers"] || "").toLowerCase()).to.include("retry-after");
+
+    const okRes = await reqJson("GET", `${HUB_URL}/.well-known/x402`, null, { origin });
+    expect(okRes.statusCode).to.eq(200);
+    expect(okRes.headers["access-control-allow-origin"]).to.eq("*");
+    expect(String(okRes.headers["access-control-allow-methods"] || "")).to.include("GET");
+
+    const errRes = await reqJson("POST", `${HUB_URL}/v1/tickets/quote`, {}, { origin });
+    expect(errRes.statusCode).to.eq(400);
+    expect(errRes.headers["access-control-allow-origin"]).to.eq("*");
+    expect(String(errRes.headers["access-control-allow-headers"] || "").toLowerCase()).to.include("content-type");
+  });
+
   it("agent keeps local hub state unchanged if ticket issue fails", async function () {
     const isolatedStateDir = path.resolve(
       __dirname,

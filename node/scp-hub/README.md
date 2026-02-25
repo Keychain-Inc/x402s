@@ -22,6 +22,7 @@ Optional env vars:
 - `GAS_SURCHARGE` (default `0`)
 - `STORE_PATH` (default `node/scp-hub/data/store.json`)
 - `REDIS_URL` (optional; if set, hub storage uses Redis instead of `STORE_PATH`, requires `npm install redis`)
+- `ALLOW_UNSAFE_PROD_STORAGE` (default unset; set `1` to allow non-Redis storage when `NODE_ENV=production`)
 - `HUB_ADMIN_TOKEN` (optional; required for `POST /v1/events/emit` when set)
 - `PAYEE_AUTH_MAX_SKEW_SEC` (default `300`, allowed timestamp skew for payee-signed admin routes)
 - `SETTLEMENT_MODE` (default `cooperative_close`; one of `cooperative_close|direct`)
@@ -89,6 +90,7 @@ node node/scp-hub/http-selftest.js
 ## Notes
 
 - Persistent JSON store on disk (`STORE_PATH`) or shared Redis store (`REDIS_URL`).
+- In production (`NODE_ENV=production`), hub requires `REDIS_URL` by default. Override only with `ALLOW_UNSAFE_PROD_STORAGE=1`.
 - Strict JSON Schema validation via Ajv using:
   - `docs/schemas/scp.quote-request.v1.schema.json`
   - `docs/schemas/scp.quote-response.v1.schema.json`

@@ -158,6 +158,9 @@ Use this profile for real usage (not local demo).
     - `per_request` (default): payer includes payment proof on each paid request.
     - `pay_once`: payer pays once, then reuses returned access token/cookie for that path.
   - `PAY_ONCE_TTL_SEC` (default `86400`) global pay-once TTL fallback when a path is not set in `pathPayOnceTtls`.
+  - `PAYEE_REPLAY_STORE_PATH` (optional): file path for persistent replay cache.
+  - `PAYEE_REPLAY_TTL_SEC` (default `2592000`): replay cache retention window.
+  - `PAYEE_REPLAY_MAX_ENTRIES` (default `50000`): replay cache size cap.
 
 ### Hub (Only If You Operate Hub Infrastructure)
 
@@ -349,6 +352,16 @@ Pay examples:
 # direct CLI payment flow
 npm run scp:agent:pay -- https://api.example/pay hub
 
+# stream-connection client (repeating payments, cadence from offer stream.t unless overridden)
+npm run scp:agent:stream -- https://api.example/pay --route hub --ticks 12
+
+# Spotify-style local music demo (paid chunk every 5s)
+npm run scp:music
+# then open http://127.0.0.1:4095/music (alias: /app)
+
+# terminal music stream client (advances chunk cursor each tick)
+npm run scp:music:stream -- http://127.0.0.1:4095 --track neon-sky --ticks 12
+
 # call the agent API server instead of direct CLI flow
 curl -sS http://127.0.0.1:4060/v1/call-api \
   -H 'content-type: application/json' \
@@ -475,6 +488,7 @@ OFFERS_FILE=./offers.example.json
 
 `offers.example.json` drives:
 - accepted networks/assets/modes (`offers[]`)
+- optional stream cadence metadata (`offers[].stream`)
 - per-path pricing (`pathPrices`)
 - optional per-path payment behavior (`pathPaymentModes`)
 - optional per-path pay-once TTL seconds (`pathPayOnceTtls`)
@@ -488,6 +502,7 @@ Example:
       "network": "base",
       "asset": ["usdc", "eth"],
       "maxAmountRequired": ["0.50", "0.005"],
+      "stream": { "t": 5 },
       "mode": "hub",
       "hubName": "pay.eth",
       "hubEndpoint": "http://159.223.150.70/hub/sepolia"
@@ -509,6 +524,15 @@ Example:
   }
 }
 ```
+
+When a hub offer is returned, payees include stream metadata at:
+
+```text
+accepts[].extensions["statechannel-hub-v1"].stream = { amount, t }
+```
+
+- `amount`: raw smallest-unit amount for one stream interval (defaults to route `maxAmountRequired`).
+- `t`: stream interval seconds (defaults to `5`, or `offers[].stream.t` when provided).
 
 Verification helper for payee servers:
 
@@ -550,6 +574,7 @@ return res.json(response);
 | `STORE_PATH` | `./data/store.json` | File-backed store path |
 | `REDIS_URL` | unset | Optional shared Redis backend |
 | `HUB_WORKERS` | `0` | Cluster workers (`0` = single process) |
+| `ALLOW_UNSAFE_PROD_STORAGE` | unset | Must be `1` to allow non-Redis storage when `NODE_ENV=production` |
 | `ALLOW_UNSAFE_CLUSTER` | unset | Must be `1` to force cluster mode |
 
 Fee formula:
@@ -620,6 +645,7 @@ npm install redis
 | Command | Purpose |
 |---|---|
 | `npm run scp:agent:pay -- <url> [hub|direct]` | Pay a URL |
+| `npm run scp:agent:stream -- <url> --route hub` | Keep a live paid connection (stream tick payments; default offer cadence / 5s fallback) |
 | `npm run scp:agent:pay -- <url> --method POST --json '{"x":1}'` | Paid API call with payload |
 | `npm run scp:agent:pay -- <channelId> <amount>` | Pay through specific channel |
 | `npm run scp:agent:payments` | Show payment history |
@@ -644,6 +670,8 @@ npm install redis
 | `npm run scp:payee` | Start payee demo server |
 | `npm run scp:weather` | Start weather API template |
 | `npm run scp:meow` | Start paid `/meow` API template |
+| `npm run scp:music` | Start paid music stream app (`/music`, alias `/app`) |
+| `npm run scp:music:stream -- [baseUrl]` | Pay and stream music chunks from terminal (cursor advances every tick) |
 | `npm run scp:agent` | Agent runner (status/help; optional local `/pay` helper) |
 | `npm run scp:agent:server` | Agent HTTP service |
 | `npm run scp:dash` | Agent dashboard |
