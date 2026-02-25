@@ -24,6 +24,11 @@ contract X402StateChannel is IX402StateChannel {
         uint256 closeBalA;
         uint256 closeBalB;
         uint8 hubFlags; // 0=none, 1=A is hub, 2=B is hub, 3=both
+        // Funded balance tracking — cumulative funds attributed to each side
+        // from openChannel, deposit, and rebalance.  Separate from close
+        // dispute state (closeBalA/closeBalB) which comes from signed states.
+        uint256 fundedBalA;
+        uint256 fundedBalB;
     }
 
     mapping(bytes32 => Channel) private _channels;
@@ -81,7 +86,9 @@ contract X402StateChannel is IX402StateChannel {
             latestNonce: 0,
             closeBalA: 0,
             closeBalB: 0,
-            hubFlags: hubFlags
+            hubFlags: hubFlags,
+            fundedBalA: 0,
+            fundedBalB: 0
         });
         _usedChannelIds[channelId] = true;
 
@@ -96,6 +103,7 @@ contract X402StateChannel is IX402StateChannel {
 
         _collectAsset(asset, msg.sender, amount);
         _channels[channelId].totalBalance = amount;
+        _channels[channelId].fundedBalA = amount; // opener (A) funds everything
 
         emit ChannelOpened(
             channelId,
@@ -121,6 +129,11 @@ contract X402StateChannel is IX402StateChannel {
         _collectAsset(ch.asset, msg.sender, amount);
         // C2: Solidity 0.8.x has built-in overflow protection
         ch.totalBalance = ch.totalBalance + amount;
+        if (msg.sender == ch.participantA) {
+            ch.fundedBalA = ch.fundedBalA + amount;
+        } else {
+            ch.fundedBalB = ch.fundedBalB + amount;
+        }
 
         emit Deposited(channelId, msg.sender, amount, ch.totalBalance);
     }
@@ -262,26 +275,23 @@ contract X402StateChannel is IX402StateChannel {
         if (msg.sender == from.participantA) {
             from.closeBalA = state.balA - amount;
             from.closeBalB = state.balB;
+            from.fundedBalA = from.fundedBalA > amount
+                ? from.fundedBalA - amount : 0;
         } else {
             from.closeBalA = state.balA;
             from.closeBalB = state.balB - amount;
+            from.fundedBalB = from.fundedBalB > amount
+                ? from.fundedBalB - amount : 0;
         }
 
         to.totalBalance = to.totalBalance + amount;
-        // C-1 fix: credit the hub's side of the destination channel so that
-        // balance(toChannelId) is accurate and _validateState still passes
-        // for states signed against the new totalBalance.
-        // Initialize committed balances if they haven't been set yet
-        // (fresh channel where A funded everything).
-        if (to.closeBalA + to.closeBalB + amount != to.totalBalance) {
-            // First rebalance into this channel — bootstrap from default split
-            to.closeBalA = to.totalBalance - amount; // was all-A before this rebalance
-            to.closeBalB = 0;
-        }
+        // C-1 fix: track which side of the destination channel receives
+        // the rebalanced funds.  Uses fundedBal (not closeBal, which
+        // belongs to the dispute flow).
         if (msg.sender == to.participantA) {
-            to.closeBalA = to.closeBalA + amount;
+            to.fundedBalA = to.fundedBalA + amount;
         } else {
-            to.closeBalB = to.closeBalB + amount;
+            to.fundedBalB = to.fundedBalB + amount;
         }
 
         emit Rebalanced(
@@ -379,18 +389,14 @@ contract X402StateChannel is IX402StateChannel {
         bal.totalBalance = ch.totalBalance;
         bal.latestNonce = ch.latestNonce;
         bal.isClosing = ch.isClosing;
-        // Return committed balances if they've been set by close, challenge,
-        // or rebalance.  After rebalance the destination channel may still
-        // have latestNonce==0, so also check the invariant directly.
-        if (ch.isClosing || ch.latestNonce > 0
-            || (ch.totalBalance > 0 && ch.closeBalA + ch.closeBalB == ch.totalBalance))
-        {
+        if (ch.isClosing || ch.latestNonce > 0) {
+            // Dispute/close committed state — signed state balances
             bal.balA = ch.closeBalA;
             bal.balB = ch.closeBalB;
         } else {
-            // Pre-close, pre-rebalance: A funded the channel, B has 0
-            bal.balA = ch.totalBalance;
-            bal.balB = 0;
+            // Live channel — funded balance tracking (open + deposit + rebalance)
+            bal.balA = ch.fundedBalA;
+            bal.balB = ch.fundedBalB;
         }
     }
 
