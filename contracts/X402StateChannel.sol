@@ -389,8 +389,8 @@ contract X402StateChannel is IX402StateChannel {
         bal.totalBalance = ch.totalBalance;
         bal.latestNonce = ch.latestNonce;
         bal.isClosing = ch.isClosing;
-        if (ch.isClosing || ch.latestNonce > 0) {
-            // Dispute/close committed state — signed state balances
+        if (ch.isClosing) {
+            // Dispute payout state — from signed states via startClose/challenge
             bal.balA = ch.closeBalA;
             bal.balB = ch.closeBalB;
         } else {
