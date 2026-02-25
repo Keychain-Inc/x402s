@@ -14,9 +14,10 @@ A practical guide to using x402s — state channel payments for agents and APIs.
 - [Part 3: Running a Hub](#part-3-running-a-hub)
 - [Part 4: Channel Management](#part-4-channel-management)
 - [Part 5: Direct (Hubless) Payments](#part-5-direct-hubless-payments)
-- [Part 6: Monitoring and Safety](#part-6-monitoring-and-safety)
-- [Part 7: Testing and Development](#part-7-testing-and-development)
-- [Part 8: Production Checklist](#part-8-production-checklist)
+- [Part 6: Stream Payments](#part-6-stream-payments)
+- [Part 7: Monitoring and Safety](#part-7-monitoring-and-safety)
+- [Part 8: Testing and Development](#part-8-testing-and-development)
+- [Part 9: Production Checklist](#part-9-production-checklist)
 - [Configuration Reference](#configuration-reference)
 - [Troubleshooting](#troubleshooting)
 
@@ -29,7 +30,8 @@ A practical guide to using x402s — state channel payments for agents and APIs.
 | An agent developer who needs to pay for APIs | [Part 1](#part-1-paying-apis-as-an-agent) |
 | An API developer who wants to charge for endpoints | [Part 2](#part-2-building-a-paid-api-payee) |
 | Running your own payment hub infrastructure | [Part 3](#part-3-running-a-hub) |
-| Testing or evaluating the protocol | [Part 7](#part-7-testing-and-development) |
+| Testing or evaluating the protocol | [Part 8](#part-8-testing-and-development) |
+| Building or consuming a streaming API | [Part 6](#part-6-stream-payments) |
 
 Most users only need **Part 1** — paying APIs as an agent.
 
@@ -553,7 +555,193 @@ Direct mode skips the hub entirely. Agent and payee share a channel directly.
 
 ---
 
-## Part 6: Monitoring and Safety
+## Part 6: Stream Payments
+
+Stream payments let an agent pay continuously for ongoing access — unlocking content in fixed-interval ticks rather than one-shot requests. Each tick is a normal x402 payment, but the payee advertises a **cadence** (`t` seconds) and the agent loops on that cadence until the stream ends or the agent stops.
+
+### How It Works
+
+1. Agent requests a stream-capable endpoint.
+2. Payee returns `402` with a `stream` extension inside the offer:
+   ```json
+   {
+     "extensions": {
+       "statechannel-hub-v1": {
+         "stream": { "amount": "100000000000", "t": 5 }
+       }
+     }
+   }
+   ```
+3. Agent pays, receives a response with `stream.nextCursor` and `stream.hasMore`.
+4. Agent sleeps `t` seconds, then pays again at the new cursor position.
+5. Repeat until `hasMore` is `false` or the agent stops.
+
+The `stream` extension fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `amount` | string | Wei charged per tick |
+| `t` | integer | Cadence in seconds — how often the agent should pay |
+
+The payee response after each successful payment should include:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stream.nextCursor` | number | Cursor value for the next tick |
+| `stream.hasMore` | boolean | `false` when the stream is complete |
+| `stream.t` | integer | Cadence (may update mid-stream) |
+
+### Generic Stream Client
+
+The generic stream client works with any payee that returns `stream` metadata:
+
+```bash
+# Stream any 402-protected URL
+npm run scp:agent:stream -- https://api.example.com/v1/feed
+
+# With options
+npm run scp:agent:stream -- https://api.example.com/v1/feed \
+  --route hub \
+  --ticks 20 \
+  --interval-sec 10 \
+  --continue-on-error
+```
+
+Options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--route <hub\|direct\|auto>` | `hub` | Route preference |
+| `--ticks <n>` | `0` (infinite) | Stop after N paid ticks |
+| `--interval-sec <n>` | from offer | Override cadence |
+| `--cursor <value>` | none | Initial cursor value |
+| `--cursor-param <name>` | `cursor` | Query param name for cursor |
+| `--network <network>` | from env | Offer network filter |
+| `--asset <address>` | any | Offer asset filter |
+| `--continue-on-error` | off | Keep streaming after failures |
+
+The client reads `stream.t` from the payee response and adjusts its sleep interval automatically. If the payee returns `stream.nextCursor`, the client appends it as a query parameter on the next tick.
+
+### Building a Streaming Payee
+
+To make any payee endpoint stream-capable, add the `stream` extension to your offers and return stream metadata in your 200 response.
+
+**1. Emit `stream` in offers:**
+
+In your `offers.json` or offer builder, add the stream block:
+
+```json
+{
+  "routes": [
+    {
+      "path": "/v1/feed",
+      "accepts": [
+        {
+          "scheme": "statechannel-hub-v1",
+          "network": "eip155:8453",
+          "asset": "0x0000000000000000000000000000000000000000",
+          "maxAmountRequired": "100000000000",
+          "extensions": {
+            "statechannel-hub-v1": {
+              "stream": { "amount": "100000000000", "t": 5 }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+**2. Return stream metadata in the 200 response:**
+
+After verifying payment, include cursor and continuation info:
+
+```js
+// After payment verification succeeds
+const startCursor = Number(req.query.cursor || 0);
+const endCursor = startCursor + STREAM_T_SEC;
+const hasMore = endCursor < totalLength;
+
+res.json({
+  ok: true,
+  data: getChunk(startCursor, endCursor),
+  stream: {
+    amount: amountWei,
+    t: STREAM_T_SEC,
+    nextCursor: endCursor,
+    hasMore
+  },
+  receipt: { paymentId: check.paymentId }
+});
+```
+
+The agent reads `stream.nextCursor` and `stream.hasMore` to drive the payment loop.
+
+### Music API Demo
+
+The repo includes a full streaming demo — a pay-per-second music service with a browser frontend:
+
+```bash
+# Start the music API (port 4095)
+npm run scp:music
+
+# Stream from CLI
+npm run scp:music:stream
+npm run scp:music:stream -- http://127.0.0.1:4095 --track neon-sky --ticks 8
+
+# Or open the browser app
+open http://127.0.0.1:4095/music
+```
+
+The music API demonstrates:
+
+- **Track catalog** at `/v1/music/catalog`
+- **Paid chunks** at `/music/chunk?track=<id>&cursor=<sec>` — returns 402, each tick unlocks `t` seconds of playback
+- **WebSocket layer** at `/music/ws?session=<id>` — pushes `scp.402` and `scp.approved` events to the browser frontend so a separate agent can drive payments while the UI stays reactive
+- **Browser frontend** at `/music` — vinyl visualizer with FFT bars, track library, playback controls, real-time event log
+
+Config (env vars):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PAYEE_PRIVATE_KEY` | — | Required |
+| `MUSIC_PORT` / `PORT` | `4095` | Listen port |
+| `NETWORK` | `base` | Chain |
+| `HUB_ENDPOINT` / `HUB_URL` | from network | Hub URL |
+| `MUSIC_PRICE_ETH` | `0.0000001` | Price per tick |
+| `MUSIC_STREAM_T_SEC` / `STREAM_T_SEC` | `5` | Cadence seconds |
+| `MUSIC_PUBLIC_BASE_URL` | — | Public URL for proxied setups |
+
+### WebSocket Protocol (Browser Streaming)
+
+For browser-based streaming, the music API exposes a WebSocket at `/music/ws`. The browser connects and receives real-time events. An external agent (CLI or browser agent) handles the actual payment loop by calling the HTTP chunk endpoint.
+
+**Client → Server messages:**
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `offer.get` | `track`, `cursor` | Request a fresh 402 offer |
+| `control.start` | `track`, `cursor` | Begin the stream |
+| `control.stop` | — | Stop the stream |
+| `ping` | — | Keep-alive |
+
+**Server → Client messages:**
+
+| Type | Key Fields | Description |
+|------|------------|-------------|
+| `ws.connected` | `sessionId`, `amount`, `t` | Connection established |
+| `scp.402` | `offer` | Payment required for next tick |
+| `scp.approved` | `paymentId`, `stream`, `chunk` | Tick paid, content unlocked |
+| `scp.rejected` | `error` | Payment failed |
+| `stream.start` | `amount`, `t` | Stream loop started |
+| `stream.stop` | — | Stream stopped |
+
+The pattern: the browser connects via WebSocket for real-time UI updates, while a separate process (the agent) makes paid HTTP calls. The payee server bridges the two by emitting WebSocket events when payments arrive.
+
+---
+
+## Part 7: Monitoring and Safety
 
 ### Challenge Watcher
 
@@ -613,7 +801,7 @@ The agent rejects any offer or quote that exceeds these caps.
 
 ---
 
-## Part 7: Testing and Development
+## Part 8: Testing and Development
 
 ### Quick Local Test (No Blockchain)
 
@@ -712,7 +900,7 @@ Both use CREATE2 for deterministic addresses. The canonical address is `0x07ECA6
 
 ---
 
-## Part 8: Production Checklist
+## Part 9: Production Checklist
 
 ### Agent
 
@@ -761,6 +949,7 @@ Both use CREATE2 for deterministic addresses. The canonical address is `0x07ECA6
 | `npm run scp:agent:pay -- <channelId> <amount>` | Pay through a specific channel |
 | `npm run scp:agent:server` | Agent as HTTP service (port 4060) |
 | `npm run scp:agent` | Agent status + optional local `/pay` helper |
+| `npm run scp:agent:stream -- <url> [options]` | Stream (pay in a loop) any 402 URL |
 | `npm run scp:agent:payments` | Payment history |
 | `npm run scp:dash` | Agent dashboard |
 | **Channels** | |
@@ -773,6 +962,8 @@ Both use CREATE2 for deterministic addresses. The canonical address is `0x07ECA6
 | `npm run scp:payee` | Start demo payee (port 4042) |
 | `npm run scp:weather` | Start weather API template |
 | `npm run scp:meow` | Start meow API template |
+| `npm run scp:music` | Start music streaming API (port 4095) |
+| `npm run scp:music:stream -- [url] [options]` | CLI stream client for music API |
 | **Testing** | |
 | `npm run scp:test` | Contract tests |
 | `npm run scp:test:deep` | Integration tests |
@@ -814,6 +1005,7 @@ Both use CREATE2 for deterministic addresses. The canonical address is `0x07ECA6
 | Payee | 4042 |
 | Agent HTTP Server | 4060 |
 | Meow API | 4090 |
+| Music API | 4095 |
 
 ---
 
