@@ -67,15 +67,6 @@ interface IX402StateChannel {
         uint256 amount,
         uint64 challengePeriodSec,
         uint64 channelExpiry,
-        bytes32 salt
-    ) external payable returns (bytes32 channelId);
-
-    function openChannelWithHub(
-        address participantB,
-        address asset,
-        uint256 amount,
-        uint64 challengePeriodSec,
-        uint64 channelExpiry,
         bytes32 salt,
         uint8 hubFlags
     ) external payable returns (bytes32 channelId);
@@ -109,10 +100,10 @@ interface IX402StateChannel {
     );
 
     function rebalance(
-        ChannelState calldata fromState,
+        ChannelState calldata state,
         bytes32 toChannelId,
-        bytes calldata sigA,
-        bytes calldata sigB
+        uint256 amount,
+        bytes calldata sigCounterparty
     ) external;
 
     function getChannel(bytes32 channelId)

@@ -54,37 +54,14 @@ contract X402StateChannel is IX402StateChannel {
         uint256 amount,
         uint64 challengePeriodSec,
         uint64 channelExpiry,
-        bytes32 salt
+        bytes32 salt,
+        uint8 hubFlags
     ) external payable override returns (bytes32 channelId) {
-        return _openChannel(participantB, asset, amount, challengePeriodSec, channelExpiry, salt, 0);
-    }
-
-    function openChannelWithHub(
-        address participantB,
-        address asset,
-        uint256 amount,
-        uint64 challengePeriodSec,
-        uint64 channelExpiry,
-        bytes32 salt,
-        uint8 hubFlags
-    ) external payable returns (bytes32 channelId) {
-        require(hubFlags <= 3, "SCP: bad hubFlags");
-        return _openChannel(participantB, asset, amount, challengePeriodSec, channelExpiry, salt, hubFlags);
-    }
-
-    function _openChannel(
-        address participantB,
-        address asset,
-        uint256 amount,
-        uint64 challengePeriodSec,
-        uint64 channelExpiry,
-        bytes32 salt,
-        uint8 hubFlags
-    ) internal returns (bytes32 channelId) {
         require(participantB != address(0), "SCP: bad participantB");
         require(challengePeriodSec > 0, "SCP: bad challenge");
         require(channelExpiry > block.timestamp, "SCP: bad expiry");
         require(amount > 0, "SCP: zero amount"); // H11
+        require(hubFlags <= 3, "SCP: bad hubFlags");
 
         channelId = keccak256(
             abi.encode(block.chainid, address(this), msg.sender, participantB, asset, salt)
@@ -240,12 +217,12 @@ contract X402StateChannel is IX402StateChannel {
     }
 
     function rebalance(
-        ChannelState calldata fromState,
+        ChannelState calldata state,
         bytes32 toChannelId,
-        bytes calldata sigA,
-        bytes calldata sigB
+        uint256 amount,
+        bytes calldata sigCounterparty
     ) external override {
-        Channel storage from = _channels[fromState.channelId];
+        Channel storage from = _channels[state.channelId];
         Channel storage to = _channels[toChannelId];
         require(from.participantA != address(0), "SCP: from not found");
         require(to.participantA != address(0), "SCP: to not found");
@@ -254,45 +231,52 @@ contract X402StateChannel is IX402StateChannel {
         require(block.timestamp < to.channelExpiry, "SCP: to expired");
         require(from.asset == to.asset, "SCP: asset mismatch");
 
-        // Caller must be a hub participant in both channels
+        // Caller must be hub in from-channel and participant in to-channel
         require(_isHub(from, msg.sender), "SCP: not hub in from");
         require(
             msg.sender == to.participantA || msg.sender == to.participantB,
             "SCP: not to participant"
         );
 
-        // Validate nonce progression
-        require(fromState.stateNonce > from.latestNonce, "SCP: stale nonce");
-        require(!_isStateExpired(fromState), "SCP: state expired");
+        // Validate the state
+        require(state.stateNonce > from.latestNonce, "SCP: stale nonce");
+        require(!_isStateExpired(state), "SCP: state expired");
+        require(state.balA + state.balB == from.totalBalance, "SCP: bad balances");
 
-        // The signed state has balA + balB <= totalBalance
-        // The diff is what gets moved to toChannel
-        uint256 stateSum = fromState.balA + fromState.balB;
-        require(stateSum <= from.totalBalance, "SCP: balances exceed total");
-        uint256 diff = from.totalBalance - stateSum;
-        require(diff > 0, "SCP: zero rebalance");
+        // Verify counterparty signed this state
+        bytes32 digest = _hashTypedData(state);
+        if (msg.sender == from.participantA) {
+            require(_recover(digest, sigCounterparty) == from.participantB, "SCP: bad counter sig");
+        } else {
+            require(_recover(digest, sigCounterparty) == from.participantA, "SCP: bad counter sig");
+        }
 
-        // Verify both signatures on the fromState
-        bytes32 digest = _hashTypedData(fromState);
-        require(_recover(digest, sigA) == from.participantA, "SCP: bad sigA");
-        require(_recover(digest, sigB) == from.participantB, "SCP: bad sigB");
+        // Amount must come from hub's side of the balance
+        require(amount > 0, "SCP: zero rebalance");
+        uint256 hubBal = (msg.sender == from.participantA) ? state.balA : state.balB;
+        require(amount <= hubBal, "SCP: amount exceeds hub balance");
 
         // Apply: shrink from, grow to
-        from.totalBalance = stateSum;
-        from.latestNonce = fromState.stateNonce;
-        from.closeBalA = fromState.balA;
-        from.closeBalB = fromState.balB;
+        from.totalBalance = from.totalBalance - amount;
+        from.latestNonce = state.stateNonce;
+        if (msg.sender == from.participantA) {
+            from.closeBalA = state.balA - amount;
+            from.closeBalB = state.balB;
+        } else {
+            from.closeBalA = state.balA;
+            from.closeBalB = state.balB - amount;
+        }
 
-        to.totalBalance = to.totalBalance + diff;
+        to.totalBalance = to.totalBalance + amount;
 
         emit Rebalanced(
-            fromState.channelId,
+            state.channelId,
             toChannelId,
-            diff,
+            amount,
             from.totalBalance,
             to.totalBalance
         );
-        emit Deposited(toChannelId, msg.sender, diff, to.totalBalance);
+        emit Deposited(toChannelId, msg.sender, amount, to.totalBalance);
     }
 
     function finalizeClose(bytes32 channelId) external override {
