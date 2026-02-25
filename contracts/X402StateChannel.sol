@@ -212,6 +212,65 @@ contract X402StateChannel is IX402StateChannel {
         emit Challenged(newer.channelId, newer.stateNonce, hashState(newer));
     }
 
+    function rebalance(
+        ChannelState calldata fromState,
+        bytes32 toChannelId,
+        bytes calldata sigA,
+        bytes calldata sigB
+    ) external override {
+        Channel storage from = _channels[fromState.channelId];
+        Channel storage to = _channels[toChannelId];
+        require(from.participantA != address(0), "SCP: from not found");
+        require(to.participantA != address(0), "SCP: to not found");
+        require(!from.isClosing, "SCP: from closing");
+        require(!to.isClosing, "SCP: to closing");
+        require(block.timestamp < to.channelExpiry, "SCP: to expired");
+        require(from.asset == to.asset, "SCP: asset mismatch");
+
+        // Caller must be participant in both channels
+        require(
+            msg.sender == from.participantA || msg.sender == from.participantB,
+            "SCP: not from participant"
+        );
+        require(
+            msg.sender == to.participantA || msg.sender == to.participantB,
+            "SCP: not to participant"
+        );
+
+        // Validate nonce progression
+        require(fromState.stateNonce > from.latestNonce, "SCP: stale nonce");
+        require(!_isStateExpired(fromState), "SCP: state expired");
+
+        // The signed state has balA + balB <= totalBalance
+        // The diff is what gets moved to toChannel
+        uint256 stateSum = fromState.balA + fromState.balB;
+        require(stateSum <= from.totalBalance, "SCP: balances exceed total");
+        uint256 diff = from.totalBalance - stateSum;
+        require(diff > 0, "SCP: zero rebalance");
+
+        // Verify both signatures on the fromState
+        bytes32 digest = _hashTypedData(fromState);
+        require(_recover(digest, sigA) == from.participantA, "SCP: bad sigA");
+        require(_recover(digest, sigB) == from.participantB, "SCP: bad sigB");
+
+        // Apply: shrink from, grow to
+        from.totalBalance = stateSum;
+        from.latestNonce = fromState.stateNonce;
+        from.closeBalA = fromState.balA;
+        from.closeBalB = fromState.balB;
+
+        to.totalBalance = to.totalBalance + diff;
+
+        emit Rebalanced(
+            fromState.channelId,
+            toChannelId,
+            diff,
+            from.totalBalance,
+            to.totalBalance
+        );
+        emit Deposited(toChannelId, msg.sender, diff, to.totalBalance);
+    }
+
     function finalizeClose(bytes32 channelId) external override {
         Channel storage ch = _channels[channelId];
         require(ch.participantA != address(0), "SCP: not found");
@@ -284,6 +343,26 @@ contract X402StateChannel is IX402StateChannel {
         returns (bytes32[] memory)
     {
         return _channelsByParticipant[participant];
+    }
+
+    function balance(bytes32 channelId)
+        external
+        view
+        override
+        returns (ChannelBalance memory bal)
+    {
+        Channel storage ch = _channels[channelId];
+        bal.totalBalance = ch.totalBalance;
+        bal.latestNonce = ch.latestNonce;
+        bal.isClosing = ch.isClosing;
+        if (ch.isClosing || ch.latestNonce > 0) {
+            bal.balA = ch.closeBalA;
+            bal.balB = ch.closeBalB;
+        } else {
+            // Pre-close: A funded the channel, B has 0
+            bal.balA = ch.totalBalance;
+            bal.balB = 0;
+        }
     }
 
     function pendingPayout(address asset, address account) external view returns (uint256) {

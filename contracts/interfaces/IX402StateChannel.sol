@@ -89,6 +89,21 @@ interface IX402StateChannel {
 
     function finalizeClose(bytes32 channelId) external;
 
+    event Rebalanced(
+        bytes32 indexed fromChannelId,
+        bytes32 indexed toChannelId,
+        uint256 amount,
+        uint256 fromNewTotal,
+        uint256 toNewTotal
+    );
+
+    function rebalance(
+        ChannelState calldata fromState,
+        bytes32 toChannelId,
+        bytes calldata sigA,
+        bytes calldata sigB
+    ) external;
+
     function getChannel(bytes32 channelId)
         external
         view
@@ -107,4 +122,17 @@ interface IX402StateChannel {
         returns (bytes32[] memory);
 
     function hashState(ChannelState calldata st) external view returns (bytes32);
+
+    struct ChannelBalance {
+        uint256 totalBalance;
+        uint256 balA;
+        uint256 balB;
+        uint64 latestNonce;
+        bool isClosing;
+    }
+
+    function balance(bytes32 channelId)
+        external
+        view
+        returns (ChannelBalance memory bal);
 }
