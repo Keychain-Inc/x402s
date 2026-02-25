@@ -268,6 +268,21 @@ contract X402StateChannel is IX402StateChannel {
         }
 
         to.totalBalance = to.totalBalance + amount;
+        // C-1 fix: credit the hub's side of the destination channel so that
+        // balance(toChannelId) is accurate and _validateState still passes
+        // for states signed against the new totalBalance.
+        // Initialize committed balances if they haven't been set yet
+        // (fresh channel where A funded everything).
+        if (to.closeBalA + to.closeBalB + amount != to.totalBalance) {
+            // First rebalance into this channel — bootstrap from default split
+            to.closeBalA = to.totalBalance - amount; // was all-A before this rebalance
+            to.closeBalB = 0;
+        }
+        if (msg.sender == to.participantA) {
+            to.closeBalA = to.closeBalA + amount;
+        } else {
+            to.closeBalB = to.closeBalB + amount;
+        }
 
         emit Rebalanced(
             state.channelId,
@@ -364,11 +379,16 @@ contract X402StateChannel is IX402StateChannel {
         bal.totalBalance = ch.totalBalance;
         bal.latestNonce = ch.latestNonce;
         bal.isClosing = ch.isClosing;
-        if (ch.isClosing || ch.latestNonce > 0) {
+        // Return committed balances if they've been set by close, challenge,
+        // or rebalance.  After rebalance the destination channel may still
+        // have latestNonce==0, so also check the invariant directly.
+        if (ch.isClosing || ch.latestNonce > 0
+            || (ch.totalBalance > 0 && ch.closeBalA + ch.closeBalB == ch.totalBalance))
+        {
             bal.balA = ch.closeBalA;
             bal.balB = ch.closeBalB;
         } else {
-            // Pre-close: A funded the channel, B has 0
+            // Pre-close, pre-rebalance: A funded the channel, B has 0
             bal.balA = ch.totalBalance;
             bal.balB = 0;
         }
