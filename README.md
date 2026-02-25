@@ -1,6 +1,6 @@
 # x402s Use Guide
 
-A practical guide to using x402s — state channel payments for agents and APIs.
+A practical guide to using x402s — state channel protocol for agents and APIs.
 
 ---
 

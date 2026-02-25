@@ -1,4 +1,4 @@
-# x402s — State Channel Payments (SCP) Protocol Specification
+# x402s — State Channel Protocol (SCP) Specification
 
 **Version:** 2.0.0-draft  
 **Status:** Draft  
