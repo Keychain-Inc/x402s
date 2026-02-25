@@ -472,7 +472,8 @@ function openChannel(
     uint256 amount,
     uint64 challengePeriodSec,
     uint64 channelExpiry,
-    bytes32 salt
+    bytes32 salt,
+    uint8 hubFlags          // 0=none, 1=A is hub, 2=B is hub, 3=both
 ) external payable returns (bytes32 channelId);
 
 function deposit(bytes32 channelId, uint256 amount) external payable;
@@ -494,12 +495,38 @@ function challenge(
 ) external;
 
 function finalizeClose(bytes32 channelId) external;
+
+function rebalance(
+    ChannelState calldata state,
+    bytes32 toChannelId,
+    uint256 amount,
+    bytes calldata sigCounterparty
+) external;
 ```
+
+**`hubFlags`** marks which participant(s) act as a hub in the channel. This controls who may call `rebalance()` to move earned funds out without closing. Typical values:
+
+| Value | Meaning | Rebalance permitted by |
+|-------|---------|------------------------|
+| `0` | No hub | Nobody (rebalance blocked) |
+| `1` | A is hub | A only |
+| `2` | B is hub | B only |
+| `3` | Both | Either |
+
+**`rebalance()`** allows a hub participant to move earned funds from one channel to another in a single transaction, without closing the source channel.
+
+The hub submits:
+- The latest off-chain state (signed by the counterparty), proving the current balance split.
+- The destination channel ID (must share the same asset and include the hub as a participant).
+- The amount to move (must not exceed the hub's balance in the signed state).
+
+The contract verifies the counterparty signature, deducts `amount` from the hub's side of the source channel, and credits it to the destination channel's `totalBalance`. The source channel remains open with a reduced `totalBalance`.
 
 ### 14.2 View Functions
 
 ```solidity
 function getChannel(bytes32 channelId) external view returns (ChannelParams memory);
+function balance(bytes32 channelId) external view returns (ChannelBalance memory);
 function getChannelCount() external view returns (uint256);
 function getChannelIds(uint256 offset, uint256 limit) external view returns (bytes32[] memory);
 function getChannelsByParticipant(address participant) external view returns (bytes32[] memory);
@@ -507,6 +534,20 @@ function hashState(ChannelState calldata st) external view returns (bytes32);
 function pendingPayout(address asset, address account) external view returns (uint256);
 function withdrawPayout(address asset) external;
 ```
+
+**`balance()`** returns the current on-chain balance view of a channel:
+
+```solidity
+struct ChannelBalance {
+    uint256 totalBalance;
+    uint256 balA;
+    uint256 balB;
+    uint64  latestNonce;
+    bool    isClosing;
+}
+```
+
+If the channel is closing or has had on-chain state updates (via `rebalance` or dispute), `balA`/`balB` reflect the last submitted state. Otherwise, `balA = totalBalance` and `balB = 0` (initial funding assumption).
 
 ### 14.3 Channel ID Derivation
 
@@ -538,6 +579,24 @@ struct Channel {
     uint64  latestNonce;
     uint256 closeBalA;
     uint256 closeBalB;
+    uint8   hubFlags;       // 0=none, 1=A is hub, 2=B is hub, 3=both
+}
+```
+
+The `ChannelParams` struct returned by `getChannel()` includes `hubFlags`:
+
+```solidity
+struct ChannelParams {
+    address participantA;
+    address participantB;
+    address asset;
+    uint64  challengePeriodSec;
+    uint64  channelExpiry;
+    uint256 totalBalance;
+    bool    isClosing;
+    uint64  closeDeadline;
+    uint64  latestNonce;
+    uint8   hubFlags;
 }
 ```
 
@@ -550,20 +609,22 @@ struct Channel {
 | `CloseStarted` | `channelId`, `stateNonce`, `closeDeadline`, `stateHash` |
 | `Challenged` | `channelId`, `stateNonce`, `stateHash` |
 | `ChannelClosed` | `channelId`, `finalNonce`, `payoutA`, `payoutB` |
+| `Rebalanced` | `fromChannelId`, `toChannelId`, `amount`, `fromNewTotal`, `toNewTotal` |
 | `PayoutDeferred` | `asset`, `to`, `amount` |
 | `PayoutWithdrawn` | `asset`, `to`, `amount` |
 
 ### 14.6 Contract Validation Rules
 
 1. `balA + balB` MUST equal `totalBalance`.
-2. `stateNonce` MUST be strictly greater than `latestNonce` for cooperative close and challenge. `startClose` allows equal nonce.
+2. `stateNonce` MUST be strictly greater than `latestNonce` for cooperative close, challenge, and rebalance. `startClose` allows equal nonce.
 3. States with `stateExpiry > 0 && block.timestamp > stateExpiry` are rejected.
 4. `challenge()` is only callable during the challenge window (`block.timestamp <= closeDeadline`).
 5. `finalizeClose()` is only callable after the challenge window (`block.timestamp > closeDeadline`).
 6. `cooperativeClose()` is blocked if the channel is already closing.
 7. Failed ETH/ERC-20 transfers during payout are deferred to a pull-based `withdrawPayout()` pattern rather than reverting.
-8. `openChannel` requires: `participantB != address(0)`, `challengePeriodSec > 0`, `channelExpiry > block.timestamp`, `amount > 0`.
+8. `openChannel` requires: `participantB != address(0)`, `challengePeriodSec > 0`, `channelExpiry > block.timestamp`, `amount > 0`, `hubFlags <= 3`.
 9. Only channel participants may call `deposit`, `startClose`, and `challenge`.
+10. `rebalance()` requires: caller is a hub participant in the source channel (`_isHub()` check against `hubFlags`), caller is a participant in the destination channel, same asset on both channels, destination channel not closing or expired, and `amount <= hub's balance` in the signed state.
 
 ---
 
@@ -571,9 +632,10 @@ struct Channel {
 
 ### 15.1 Channel Open
 
-1. Agent calls `openChannel()` on the contract with deposit, counterparty (hub or payee), asset, challenge period, expiry, and a random salt.
-2. Contract emits `ChannelOpened`.
-3. Agent can begin sending off-chain signed state updates.
+1. Agent calls `openChannel()` on the contract with deposit, counterparty (hub or payee), asset, challenge period, expiry, a random salt, and `hubFlags`.
+2. For hub-routed channels, use `hubFlags=2` (B is hub). For direct channels, use `hubFlags=0`.
+3. Contract emits `ChannelOpened`.
+4. Agent can begin sending off-chain signed state updates.
 
 ### 15.2 Channel Deposit (Top-up)
 
@@ -581,7 +643,32 @@ struct Channel {
 2. Contract increments `totalBalance`.
 3. Off-chain state MUST be re-synchronized to reflect the new total.
 
-### 15.3 Hub-Routed Payment (Discovery → Quote → Issue → Pay)
+### 15.3 Rebalance (Hub Fund Transfer)
+
+Allows a hub to move earned funds from one channel to another without closing:
+
+1. Hub has earned funds through off-chain state updates (e.g., channel 1: `A=4 B=1`, hub is B, earned 1).
+2. Hub holds the counterparty's signature on the latest state (obtained during normal payment flow).
+3. Hub calls `rebalance(state, toChannelId, amount, sigCounterparty)` where:
+   - `state` is the latest signed channel state proving the balance split.
+   - `toChannelId` is the destination channel (same asset, hub is a participant).
+   - `amount` is how much to pull from the hub's side (must be ≤ hub's balance in the state).
+   - `sigCounterparty` is the counterparty's signature on the state.
+4. Contract verifies the counterparty signature, deducts `amount` from source `totalBalance`, credits destination `totalBalance`.
+5. Source channel remains open with reduced total. Off-chain state continues from the new total.
+6. Contract emits `Rebalanced` and `Deposited` (on destination channel).
+
+Example:
+```
+Channel 1 (agent↔hub): total=5, state{A=4, B=1}
+Channel 2 (hub↔payee): total=0
+
+Hub calls rebalance(state, ch2, 1, agentSig)
+→ Channel 1: total=4, closeBalA=4, closeBalB=0
+→ Channel 2: total=1
+```
+
+### 15.4 Hub-Routed Payment (Discovery → Quote → Issue → Pay)
 
 **Step 1 — Discovery:**
 1. `A → B`: GET request for a protected resource.
@@ -605,7 +692,7 @@ struct Channel {
 2. `B` verifies: ticket signature → ticket expiry → payee match → amount match → invoice binding → idempotency.
 3. `B → A`: HTTP `200` with the resource and a payment receipt.
 
-### 15.4 Direct Payment Flow
+### 15.5 Direct Payment Flow
 
 1. `A → B`: GET resource, receives `402` with `statechannel-direct-v1` offer.
 2. `A` constructs a direct channel state update debiting the payment amount.
@@ -613,13 +700,13 @@ struct Channel {
 4. `B` verifies: signature recovery matches `payer`, nonce strictly greater than previous, `balB` delta ≥ payment amount, state not expired.
 5. `B → A`: HTTP `200` with resource and receipt.
 
-### 15.5 Refund / Reverse Transfer
+### 15.6 Refund / Reverse Transfer
 
 1. `B → H`: `POST /v1/refunds` with `{ticketId, refundAmount, reason}`.
 2. `H` issues a reverse channel update crediting `A`.
 3. `H → A`: Signed refund receipt with new `stateNonce`.
 
-### 15.6 Channel Closure
+### 15.7 Channel Closure
 
 **Cooperative Close (fast path):**
 1. Either party proposes the latest state.

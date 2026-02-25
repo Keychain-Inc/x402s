@@ -466,10 +466,10 @@ For production traffic:
 ### Opening Channels
 
 ```bash
-# Open to a hub
+# Open to a hub (hubFlags=2: B is hub)
 npm run scp:channel:open -- 0xHubAddress base usdc 20
 
-# Open to a payee (for direct payments)
+# Open to a payee (for direct payments, hubFlags=0)
 npm run scp:channel:open -- 0xPayeeAddress base usdc 10
 
 # Open with ETH
@@ -478,13 +478,15 @@ npm run scp:channel:open -- 0xHubAddress sepolia eth 0.01
 
 The system resolves RPC URLs, contract addresses, and token addresses automatically from the network and asset names.
 
+When opening to a hub, the channel is created with `hubFlags=2` (B is hub), which allows the hub to `rebalance` earned funds into other channels without closing. Direct channels use `hubFlags=0`.
+
 ### Listing Channels
 
 ```bash
 npm run scp:channel:list
 ```
 
-Shows all your open channels with balances, nonces, and status.
+Shows all your open channels with balances, nonces, hubFlags, and status.
 
 ### Funding (Top-up)
 
@@ -498,6 +500,25 @@ npm run scp:channel:fund -- 0xChannelId usdc 10
 balance = expected_calls × (price_per_call + fee_per_call)
 ```
 
+### Rebalance (Hub Fund Transfer)
+
+Hubs can move earned funds from one channel to another without closing:
+
+```bash
+npm run scp:channel:rebalance -- 0xFromChannelId 0xToChannelId 1000000
+```
+
+This calls the contract's `rebalance()` function, which:
+
+1. Takes the latest signed state from the source channel (proving the hub's earned balance).
+2. Deducts the specified amount from the hub's side.
+3. Credits it to the destination channel's `totalBalance`.
+4. Source channel stays open with reduced total.
+
+Example: The hub has earned 1 USDC in channel 1 (agent→hub). It rebalances that 1 USDC into channel 2 (hub→payee), funding the payee settlement channel without any new on-chain deposit.
+
+Requirements: caller must be flagged as hub in the source channel (`hubFlags`), must be a participant in the destination channel, and both channels must use the same asset.
+
 ### Closing Channels
 
 ```bash
@@ -510,13 +531,17 @@ This attempts a cooperative close first (instant, both parties agree on final ba
 
 ```
 Open ──→ Active ──→ Closing ──→ Closed
-  │                    │
-  │  (cooperative)     │  (challenge period)
+  │         │          │
+  │         │ rebalance│  (challenge period)
+  │         ↓          │
+  │    Active (reduced)│
+  │  (cooperative)     │
   └────────────────────┘
 ```
 
 - **Open:** On-chain deposit. Channel ready for off-chain updates.
 - **Active:** Off-chain balance updates with every payment.
+- **Rebalance:** Hub moves earned funds to another channel. Source channel stays active with reduced total.
 - **Closing:** Either cooperative (instant) or unilateral (challenge window).
 - **Closed:** Funds returned to both parties per final state.
 
@@ -956,6 +981,7 @@ Both use CREATE2 for deterministic addresses. The canonical address is `0x07ECA6
 | `npm run scp:channel:open -- <addr> <network> <asset> <amount>` | Open + fund |
 | `npm run scp:channel:fund -- <channelId> <amount>` | Top up |
 | `npm run scp:channel:close -- <channelId>` | Close |
+| `npm run scp:channel:rebalance -- <fromId> <toId> <amount>` | Move hub funds between channels |
 | `npm run scp:channel:list` | List all channels |
 | **Infrastructure** | |
 | `npm run scp:hub` | Start hub (port 4021) |
