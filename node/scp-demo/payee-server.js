@@ -493,7 +493,13 @@ function createPayeeServer(options = {}) {
     })
     : new Map();
   if (!cfg.replayStorePath && String(process.env.NODE_ENV || "").toLowerCase() === "production") {
-    console.warn("[payee] WARN: replay cache is in-memory only. Set PAYEE_REPLAY_STORE_PATH for persistence.");
+    // SECURITY: In-memory replay cache is wiped on restart, allowing payment replays.
+    // Previously this was a warning; now it's a hard failure in production.
+    throw new Error(
+      "FATAL: production requires persistent replay cache. " +
+      "Set PAYEE_REPLAY_STORE_PATH to a file path. " +
+      "In-memory cache allows replays after restart."
+    );
   }
   const ctx = {
     cfg,

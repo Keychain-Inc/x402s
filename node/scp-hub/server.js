@@ -302,7 +302,13 @@ function indexIssuedPayment(state, payment) {
 }
 
 function requireAdminAuth(req, res) {
-  if (!HUB_ADMIN_TOKEN) return true;
+  // SECURITY: if no admin token is configured, block admin endpoints entirely.
+  // Previously this returned true (allow-all), enabling unauthenticated webhook
+  // registration (SSRF vector) and arbitrary event emission.
+  if (!HUB_ADMIN_TOKEN) {
+    sendJson(res, 403, makeError("SCP_012_UNAUTHORIZED", "admin endpoints disabled (set HUB_ADMIN_TOKEN)"));
+    return false;
+  }
   const hdrToken = typeof req.headers["x-scp-admin-token"] === "string"
     ? req.headers["x-scp-admin-token"]
     : "";
@@ -616,8 +622,64 @@ async function handleRequest(req, res) {
           return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "state delta must equal quote totalDebit"));
         }
       } else {
+        // SECURITY: First-seen channel — verify on-chain before issuing any ticket.
+        // Without this, an attacker can submit arbitrary channelIds with fabricated
+        // balances and get the hub to sign tickets (creating uncollectible liability).
         if (Number(body.channelState.stateNonce) < 1) {
           return sendJson(res, 409, makeError("SCP_005_NONCE_CONFLICT", "first stateNonce must be >= 1"));
+        }
+        const hubSigner = getHubSigner();
+        if (!hubSigner || !CONTRACT_ADDRESS) {
+          return sendJson(res, 503, makeError("SCP_010_SETTLEMENT_UNAVAILABLE",
+            "on-chain verification required for first payment on a channel (set RPC_URL, CONTRACT_ADDRESS)"));
+        }
+        let onChainData;
+        try {
+          const contract = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, hubSigner);
+          onChainData = await contract.getChannel(body.channelState.channelId);
+        } catch (e) {
+          return sendJson(res, 409, makeError("SCP_007_CHANNEL_NOT_FOUND",
+            "on-chain channel lookup failed: " + (e.message || "unknown error")));
+        }
+        // Verify channel exists (participantA != address(0))
+        if (!onChainData || !onChainData.participantA ||
+            onChainData.participantA === ethers.constants.AddressZero) {
+          return sendJson(res, 409, makeError("SCP_007_CHANNEL_NOT_FOUND",
+            "channel does not exist on-chain"));
+        }
+        // Verify hub is a participant
+        const pA = onChainData.participantA.toLowerCase();
+        const pB = onChainData.participantB.toLowerCase();
+        if (pA !== HUB_ADDRESS.toLowerCase() && pB !== HUB_ADDRESS.toLowerCase()) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION",
+            "hub is not a participant in this channel"));
+        }
+        // Verify the signer is the other participant (not the hub)
+        const expectedPayer = pA === HUB_ADDRESS.toLowerCase() ? pB : pA;
+        if (recoveredA.toLowerCase() !== expectedPayer) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION",
+            "sigA must recover to the non-hub channel participant"));
+        }
+        // Verify channel is live (not closing, not expired)
+        if (onChainData.isClosing) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION",
+            "channel is closing"));
+        }
+        const chainExpiry = Number(onChainData.channelExpiry);
+        if (chainExpiry > 0 && chainExpiry <= now()) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION",
+            "channel expired on-chain"));
+        }
+        // Verify balance invariant: balA + balB must equal on-chain totalBalance
+        const onChainTotal = BigInt(onChainData.totalBalance.toString());
+        if (stateTotal !== onChainTotal) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION",
+            `state balance total (${stateTotal}) != on-chain totalBalance (${onChainTotal})`));
+        }
+        // Verify debit is correct for first state (starting from full balance on payer side)
+        if (onChainTotal - stateBalA !== quoteDebit || stateBalB !== quoteDebit) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION",
+            "first state delta must equal quote totalDebit from full payer balance"));
         }
       }
 

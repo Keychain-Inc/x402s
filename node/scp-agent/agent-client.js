@@ -279,7 +279,16 @@ class ScpAgentClient {
       ...envCapMap("MAX_AMOUNT"),
       ...normalizeCapMap(options.maxAmountByAsset, "maxAmountByAsset")
     };
-    this.devMode = options.devMode !== undefined ? options.devMode : !options.privateKey;
+    // SECURITY: devMode must be explicitly enabled. Previously it was implicitly
+    // enabled when no privateKey was provided, which could silently create virtual
+    // channels with fabricated balances — creating real hub liability (see audit Finding #1).
+    this.devMode = options.devMode === true || process.env.DEV_MODE === "1";
+    if (this.devMode && options.privateKey) {
+      console.warn("[agent] WARNING: devMode is enabled WITH a real private key. Virtual channels may be created.");
+    }
+    if (!options.privateKey && !this.devMode) {
+      console.warn("[agent] No privateKey provided and devMode is off. Set DEV_MODE=1 to use virtual channels.");
+    }
     this.persistEnabled = options.persistEnabled !== false;
     this.http = new HttpJsonClient({
       timeoutMs: options.timeoutMs || 8000,
@@ -725,7 +734,17 @@ class ScpAgentClient {
 
   ensureHubChannel(hubEndpoint, amount) {
     const ch = this.channelForHub(hubEndpoint);
-    if (ch) return ch;
+    if (ch) {
+      // SECURITY: refuse to pay via hub with a virtual channel — the hub will
+      // reject it anyway after Finding #1 fix, but fail early with a clear error.
+      if (ch.virtual) {
+        throw new Error(
+          "Cannot pay via hub with a virtual channel (devMode). " +
+          "Open a real on-chain channel first: npm run scp:channel:open -- <hubAddress> <deposit>"
+        );
+      }
+      return ch;
+    }
     return this.queryHubInfo(hubEndpoint).catch(() => null).then((hubInfo) => {
       if (hubInfo) throw new Error(this.formatSetupHint(hubInfo, amount));
       throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run scp:channel:open -- <hubAddress> <deposit>`);
