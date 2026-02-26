@@ -21,11 +21,63 @@ html,body{font-family:var(--f);background:var(--bg);color:var(--t1);-webkit-font
 .lgi{width:32px;height:32px;background:linear-gradient(135deg,var(--b5),var(--b7));border-radius:9px;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(59,130,246,.25)}
 .lgi svg{width:15px;height:15px}
 .lgt{font-size:16px;font-weight:700;letter-spacing:-.02em}.lgt b{color:var(--b6)}
-.sb{font-size:10px;font-weight:600;color:var(--ok);display:flex;align-items:center;gap:3px}
+.sb{font-size:10px;font-weight:600;color:var(--ok);display:flex;align-items:center;gap:3px;cursor:pointer;padding:4px 8px;border-radius:8px;transition:background .15s}
+.sb:hover{background:#ecfdf5}
 .sb svg{width:11px;height:11px}
 
 /* views */
 .v{display:none}.v.on{display:block}
+
+/* welcome */
+.wel{padding:28px 24px;text-align:center}
+.wel-i{width:64px;height:64px;background:linear-gradient(135deg,var(--b0),var(--b1));border-radius:20px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;border:2px solid var(--b1)}
+.wel-i svg{width:28px;height:28px;color:var(--b6)}
+.wel h2{font-size:20px;font-weight:800;margin-bottom:4px}
+.wel p{font-size:13px;color:var(--t2);line-height:1.5;max-width:280px;margin:0 auto}
+
+/* wallet display */
+.wd{margin:0 24px 16px;padding:14px 16px;background:var(--b0);border:1.5px solid var(--b1);border-radius:var(--r);position:relative}
+.wd-l{font-size:10px;font-weight:600;color:var(--b6);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.wd-a{font-family:var(--m);font-size:12px;font-weight:500;color:var(--t1);word-break:break-all;line-height:1.6;cursor:pointer}
+.wd-a:hover{color:var(--b6)}
+.wd-c{position:absolute;top:12px;right:12px;font-size:9px;font-weight:600;color:var(--b5);background:var(--b1);padding:3px 8px;border-radius:6px;cursor:pointer;border:none}
+.wd-c:hover{background:var(--b5);color:#fff}
+.wd-b{display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--b1)}
+.wd-bi{flex:1;text-align:center}
+.wd-bi .lb{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.03em}
+.wd-bi .vl{font-size:13px;font-weight:700;color:var(--t1);margin-top:2px}
+
+/* form */
+.fm{padding:0 24px 16px;display:flex;flex-direction:column;gap:10px}
+.fl{display:flex;flex-direction:column;gap:3px}
+.fl label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.04em}
+.fl input,.fl select{font-family:var(--f);font-size:13px;font-weight:500;padding:10px 12px;border:1.5px solid var(--bd);border-radius:10px;background:#fff;color:var(--t1);outline:none;transition:border .15s,box-shadow .15s;width:100%}
+.fl input:focus,.fl select:focus{border-color:var(--b5);box-shadow:0 0 0 3px rgba(59,130,246,.08)}
+.fl input::placeholder{color:var(--t3)}
+.fl textarea{font-family:var(--m);font-size:11px;padding:10px 12px;border:1.5px solid var(--bd);border-radius:10px;background:#fff;color:var(--t1);outline:none;resize:none;height:60px;transition:border .15s}
+.fl textarea:focus{border-color:var(--b5)}
+.fr{display:flex;gap:8px}.fr .fl{flex:1}
+.fh{font-size:9px;color:var(--t3);line-height:1.3;margin-top:2px}
+.fw{font-size:9px;color:#d97706;background:#fefce8;border:1px solid #fef3c7;border-radius:6px;padding:5px 8px;line-height:1.3;margin-top:3px}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:600;padding:3px 8px;border-radius:6px;cursor:pointer;border:1px solid var(--bd);background:var(--bg);color:var(--t2);transition:all .15s}
+.tag:hover,.tag.on{background:var(--b0);border-color:var(--b5);color:var(--b6)}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+
+/* buttons */
+.ba{padding:0 24px 20px}
+.bt{width:100%;padding:14px;font-family:var(--f);font-size:15px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--b6),var(--b7));border:none;border-radius:var(--r);cursor:pointer;box-shadow:0 4px 16px rgba(59,130,246,.25);transition:all .2s;display:flex;align-items:center;justify-content:center;gap:7px;position:relative;overflow:hidden}
+.bt:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 24px rgba(59,130,246,.3)}
+.bt:disabled{opacity:.5;cursor:not-allowed}
+.bt::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.1),transparent 60%);pointer-events:none}
+.bt.ld{pointer-events:none;background:var(--b5)}
+.bt.ok{background:linear-gradient(135deg,var(--ok),#059669);box-shadow:0 4px 16px rgba(16,185,129,.25);pointer-events:none}
+.b2{width:100%;padding:10px;font-family:var(--f);font-size:13px;font-weight:600;color:var(--b6);background:var(--b0);border:1.5px solid var(--b1);border-radius:var(--r);cursor:pointer;transition:background .15s}
+.b2:hover{background:var(--b1)}
+.b3{padding:10px 16px;font-family:var(--f);font-size:13px;font-weight:600;color:var(--t2);background:var(--bg);border:1.5px solid var(--bd);border-radius:var(--r);cursor:pointer;transition:all .15s;flex:1}
+.b3:hover{border-color:var(--b5);color:var(--b6)}
+.brow{display:flex;gap:8px;margin-top:8px}
+.bdanger{width:100%;padding:8px;font-family:var(--f);font-size:11px;font-weight:600;color:var(--er);background:#fef2f2;border:1px solid #fecaca;border-radius:8px;cursor:pointer;margin-top:10px}
+.bdanger:hover{background:#fee2e2}
 
 /* amount */
 .am{padding:20px 24px;text-align:center}
@@ -44,18 +96,7 @@ html,body{font-family:var(--f);background:var(--bg);color:var(--t1);-webkit-font
 .r-v{font-size:12px;font-weight:600;color:var(--t1);display:flex;align-items:center;gap:5px}
 .dot{width:5px;height:5px;border-radius:50%;background:var(--b5)}
 
-/* form */
-.fm{padding:14px 24px;display:flex;flex-direction:column;gap:10px}
-.fl{display:flex;flex-direction:column;gap:3px}
-.fl label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.04em}
-.fl input,.fl select{font-family:var(--f);font-size:13px;font-weight:500;padding:9px 12px;border:1.5px solid var(--bd);border-radius:10px;background:#fff;color:var(--t1);outline:none;transition:border .15s,box-shadow .15s;width:100%}
-.fl input:focus,.fl select:focus{border-color:var(--b5);box-shadow:0 0 0 3px rgba(59,130,246,.08)}
-.fl input::placeholder{color:var(--t3)}
-.fr{display:flex;gap:8px}.fr .fl{flex:1}
-.fh{font-size:9px;color:var(--t3);line-height:1.3}
-.fw{font-size:9px;color:#d97706;background:#fefce8;border:1px solid #fef3c7;border-radius:6px;padding:5px 8px;line-height:1.3}
-
-/* wallet bar */
+/* wallet bar mini */
 .wb{padding:0 24px 14px}
 .wc{display:flex;align-items:center;gap:10px;padding:11px 13px;background:var(--b0);border:1.5px solid var(--b1);border-radius:var(--r)}
 .wi{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#60a5fa,var(--b6));display:flex;align-items:center;justify-content:center;flex-shrink:0}
@@ -74,17 +115,6 @@ html,body{font-family:var(--f);background:var(--bg);color:var(--t1);-webkit-font
 .sl{font-size:11px;font-weight:500;color:var(--b6);display:flex;align-items:center;gap:6px}
 .sl .p{width:5px;height:5px;border-radius:50%;background:var(--b5);animation:p 1s infinite}
 @keyframes p{0%,100%{opacity:1}50%{opacity:.3}}
-
-/* button */
-.ba{padding:0 24px 20px}
-.bt{width:100%;padding:14px;font-family:var(--f);font-size:15px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--b6),var(--b7));border:none;border-radius:var(--r);cursor:pointer;box-shadow:0 4px 16px rgba(59,130,246,.25);transition:all .2s;display:flex;align-items:center;justify-content:center;gap:7px;position:relative;overflow:hidden}
-.bt:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 24px rgba(59,130,246,.3)}
-.bt:disabled{opacity:.5;cursor:not-allowed}
-.bt::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.1),transparent 60%);pointer-events:none}
-.bt.ld{pointer-events:none;background:var(--b5)}
-.bt.ok{background:linear-gradient(135deg,var(--ok),#059669);box-shadow:0 4px 16px rgba(16,185,129,.25);pointer-events:none}
-.b2{width:100%;padding:10px;font-family:var(--f);font-size:13px;font-weight:600;color:var(--b6);background:var(--b0);border:1.5px solid var(--b1);border-radius:var(--r);cursor:pointer;margin-top:6px}
-.b2:hover{background:var(--b1)}
 
 /* spinner */
 .sp{width:18px;height:18px;border:2.5px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;flex-shrink:0}
@@ -107,8 +137,12 @@ html,body{font-family:var(--f);background:var(--bg);color:var(--t1);-webkit-font
 .er-r{width:48px;height:48px;border-radius:50%;background:#fef2f2;display:flex;align-items:center;justify-content:center}
 .er-r svg{width:22px;height:22px;color:var(--er)}
 .em{font-size:11px;color:var(--t2);text-align:center;max-width:260px;line-height:1.5;word-break:break-word}
-.rb{font-size:13px;font-weight:600;color:var(--b6);background:var(--b0);border:1.5px solid var(--b1);padding:8px 20px;border-radius:var(--r);cursor:pointer}
+.rb{font-size:13px;font-weight:600;color:var(--b6);background:var(--b0);border:1.5px solid var(--b1);padding:8px 20px;border-radius:var(--r);cursor:pointer;border:1.5px solid var(--b1)}
 .rb:hover{background:var(--b1)}
+
+/* settings panel */
+.sp2{padding:16px 24px}
+.sp2 h3{font-size:14px;font-weight:700;margin-bottom:12px}
 
 /* footer */
 .ft{padding:12px 24px;background:var(--bg);display:flex;align-items:center;justify-content:center;gap:5px;border-radius:0 0 20px 20px}
@@ -124,23 +158,61 @@ html,body{font-family:var(--f);background:var(--bg);color:var(--t1);-webkit-font
 <!-- Header -->
 <div class="hd">
   <div class="lg"><div class="lgi"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><div class="lgt"><b>x402</b> Pay</div></div>
-  <div class="sb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Secure</div>
+  <div class="sb" id="hSet" onclick="goSet()" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
 </div>
 
-<!-- VIEW: Config -->
-<div class="v on" id="vCfg">
-  <div class="am"><div class="am-l">SCP Light Payment</div><div style="font-size:13px;color:var(--t2);margin-top:4px">Enter target URL and agent key to pay</div></div>
-  <div class="dv"></div>
-  <div class="fm">
-    <div class="fl"><label>Target URL (402)</label><input id="iUrl" type="url" placeholder="https://api.example.com/v1/data"/></div>
-    <div class="fl"><label>Agent Private Key</label><input id="iKey" type="password" placeholder="0x..." autocomplete="off"/><div class="fw">&#9888; Dedicated agent wallet or testnet key only.</div></div>
-    <div class="fr"><div class="fl"><label>Network</label><select id="iNet"><option value="sepolia">Sepolia</option><option value="base-sepolia">Base Sepolia</option><option value="base">Base</option><option value="mainnet">Mainnet</option></select></div><div class="fl"><label>Route</label><select id="iRt"><option value="hub">Hub</option><option value="auto">Auto</option><option value="direct">Direct</option></select></div></div>
-    <div class="fl"><label>Custom RPC (optional)</label><input id="iRpc" type="url" placeholder="https://eth-sepolia.g.alchemy.com/v2/..."/><div class="fh">Public RPCs may have CORS issues. Use Alchemy / Infura / QuickNode.</div></div>
+<!-- VIEW 1: Welcome / Setup -->
+<div class="v on" id="vWel">
+  <div class="wel">
+    <div class="wel-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="20" height="14" rx="3"/><path d="M2 10h20"/><circle cx="17" cy="15" r="1.5" fill="currentColor" stroke="none"/></svg></div>
+    <h2>Set up your wallet</h2>
+    <p>Create a lightweight agent wallet to pay for 402 APIs instantly via state channels.</p>
   </div>
-  <div class="ba"><button class="bt" id="bDisc" onclick="discover()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><span>Discover &amp; Pay</span></button></div>
+  <div class="ba" style="display:flex;flex-direction:column;gap:8px">
+    <button class="bt" onclick="createWallet()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Create New Wallet</button>
+    <button class="b2" onclick="showImport()">Import Existing Key</button>
+  </div>
 </div>
 
-<!-- VIEW: Pay -->
+<!-- VIEW 1b: Import -->
+<div class="v" id="vImp">
+  <div class="wel">
+    <div class="wel-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div>
+    <h2>Import wallet</h2>
+    <p>Paste an existing private key. Use a dedicated agent key, not your main wallet.</p>
+  </div>
+  <div class="fm">
+    <div class="fl"><label>Private Key</label><textarea id="iImpKey" placeholder="0x..." spellcheck="false"></textarea></div>
+    <div class="fw">&#9888; Only use a dedicated agent key with small balances.</div>
+  </div>
+  <div class="ba" style="display:flex;flex-direction:column;gap:8px">
+    <button class="bt" onclick="importWallet()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Import</button>
+    <button class="b2" onclick="show('vWel')">Back</button>
+  </div>
+</div>
+
+<!-- VIEW 2: Ready — enter URL & pay -->
+<div class="v" id="vReady">
+  <div class="wb" style="padding-top:20px">
+    <div class="wc">
+      <div class="wi"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="20" height="14" rx="3"/><path d="M2 10h20"/><circle cx="17" cy="15" r="1.5" fill="#fff" stroke="none"/></svg></div>
+      <div style="flex:1;min-width:0">
+        <div class="wl">Agent Wallet</div>
+        <div class="wa" id="rAddr" style="cursor:pointer" onclick="cpAddr()">-</div>
+      </div>
+      <div style="text-align:right">
+        <div class="wl" id="rNetL">Sepolia</div>
+        <div class="wa" id="rBal" style="color:var(--b6)">-</div>
+      </div>
+    </div>
+  </div>
+  <div class="fm">
+    <div class="fl"><label>Pay URL</label><input id="iUrl" type="url" placeholder="https://api.example.com/v1/data"/></div>
+  </div>
+  <div class="ba"><button class="bt" id="bDisc" onclick="discover()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>Pay</span></button></div>
+</div>
+
+<!-- VIEW 3: Confirm payment -->
 <div class="v" id="vPay">
   <div class="am"><div class="am-l" id="oMerch">-</div><div class="am-v"><span id="oAmt">-</span><span class="am-c" id="oSym">-</span></div><div class="am-d" id="oDesc">-</div></div>
   <div class="dv"></div>
@@ -150,59 +222,79 @@ html,body{font-family:var(--f);background:var(--bg);color:var(--t1);-webkit-font
     <div class="r"><span class="r-l">Gas</span><span class="r-v" style="color:var(--ok);font-weight:700">$0.00 off-chain</span></div>
   </div>
   <div class="dv"></div>
-  <div class="wb" style="padding-top:14px"><div class="wc"><div class="wi"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="20" height="14" rx="3"/><path d="M2 10h20"/><circle cx="17" cy="15" r="1.5" fill="#fff" stroke="none"/></svg></div><div><div class="wl">Paying from</div><div class="wa" id="oAddr">-</div></div></div></div>
-  <div class="ch" id="chW" style="display:none"><div class="ci"><div class="ci-l">Channel</div><div class="ci-v" id="chV">-</div></div></div>
+  <div class="wb" style="padding-top:14px"><div class="wc"><div class="wi"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="20" height="14" rx="3"/><path d="M2 10h20"/></svg></div><div><div class="wl">Paying from</div><div class="wa" id="oAddr">-</div></div></div></div>
+  <div class="ch" id="chW" style="display:none"><div class="ci"><div class="ci-l">Channel Balance</div><div class="ci-v" id="chV">-</div></div></div>
   <div class="st" id="stW" style="display:none"><div class="sl"><span class="p"></span><span id="stT">-</span></div></div>
   <div class="ba">
-    <button class="bt" id="bPay" onclick="pay()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span id="bPT">Pay</span></button>
-    <button class="b2" onclick="back()">&#8592; Back</button>
+    <button class="bt" id="bPay" onclick="pay()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span id="bPT">Confirm &amp; Pay</span></button>
+    <button class="b2" style="margin-top:8px" onclick="backToReady()">Cancel</button>
   </div>
-
   <!-- Success -->
   <div class="ov" id="okO">
     <div class="ok-r"><svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></div>
     <h3>Payment complete</h3>
-    <p id="okS">Off-chain state signed via hub.</p>
+    <p id="okS">-</p>
     <div class="tid" id="okT" onclick="cpTx()">-</div>
     <div class="det" id="okD"></div>
-    <button class="rb" onclick="reset()" style="margin-top:6px">New Payment</button>
+    <button class="rb" onclick="backToReady()" style="margin-top:6px">Done</button>
   </div>
-
   <!-- Error -->
   <div class="ov" id="erO">
     <div class="er-r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg></div>
     <h3>Payment failed</h3>
     <p class="em" id="erM">-</p>
-    <button class="rb" onclick="reset()">Try again</button>
+    <button class="rb" onclick="resetPay()">Try again</button>
   </div>
+</div>
+
+<!-- VIEW 4: Settings -->
+<div class="v" id="vSet">
+  <div class="sp2">
+    <h3>Settings</h3>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="fl"><label>Network</label><select id="sNet" onchange="saveSettings()"><option value="sepolia">Sepolia</option><option value="base-sepolia">Base Sepolia</option><option value="base">Base</option><option value="mainnet">Mainnet</option></select></div>
+      <div class="fl"><label>Custom RPC (optional)</label><input id="sRpc" type="url" placeholder="https://..." onchange="saveSettings()"/><div class="fh">Use Alchemy / Infura / QuickNode for reliability.</div></div>
+      <div class="fl"><label>Route</label><select id="sRt" onchange="saveSettings()"><option value="hub">Hub (state channel)</option><option value="auto">Auto</option></select></div>
+    </div>
+  </div>
+  <div class="dv"></div>
+  <div class="sp2">
+    <h3>Wallet</h3>
+    <div class="wd" style="margin:0 0 8px">
+      <div class="wd-l">Address</div>
+      <div class="wd-a" id="sAddr" onclick="cpAddr()">-</div>
+      <button class="wd-c" onclick="cpAddr()">Copy</button>
+    </div>
+    <div class="fl"><label>Export Private Key</label><div style="display:flex;gap:6px"><button class="b3" onclick="showKey()" id="bExp">Reveal</button></div></div>
+    <div id="keyR" style="display:none;margin-top:8px"><div class="fw" style="font-family:var(--m);word-break:break-all;font-size:10px;user-select:all" id="sKey">-</div></div>
+    <button class="bdanger" onclick="resetWallet()">Remove Wallet</button>
+  </div>
+  <div class="ba" style="padding-top:16px"><button class="b2" onclick="goReady()">&#8592; Back</button></div>
 </div>
 
 <div class="ft"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>Secured by</span><a href="https://github.com/Keychain-Inc/x402s" target="_blank">x402s protocol</a></div>
 
 </div></div>
 
-<!-- ethers.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
 <script>
 // ======================================================================
-// SCP Agent core — ported from x402s/scp-agent/index.html
-// Full: wallet, RPC, discover, choose, hydrate, open, fund, EIP-712 sign,
-//       hub quote, ticket issue, paid retry with PAYMENT-SIGNATURE
+// SCP Agent — full protocol core
 // ======================================================================
 const DC="0x07ECA6701062Db12eDD04bEa391eD226C95aaD4b",Z32="0x"+"0".repeat(64),ZA="0x"+"0".repeat(40);
-const N={sepolia:{cid:11155111,caip:"eip155:11155111",rpcs:["https://rpc.ankr.com/eth_sepolia","https://eth-sepolia.public.blastapi.io","https://1rpc.io/sepolia"]},"base-sepolia":{cid:84532,caip:"eip155:84532",rpcs:["https://sepolia.base.org","https://base-sepolia.public.blastapi.io"]},"base":{cid:8453,caip:"eip155:8453",rpcs:["https://mainnet.base.org","https://rpc.ankr.com/base"]},"mainnet":{cid:1,caip:"eip155:1",rpcs:["https://rpc.ankr.com/eth","https://eth.public.blastapi.io"]}};
+const NW={sepolia:{cid:11155111,caip:"eip155:11155111",rpcs:["https://rpc.ankr.com/eth_sepolia","https://eth-sepolia.public.blastapi.io"]},"base-sepolia":{cid:84532,caip:"eip155:84532",rpcs:["https://sepolia.base.org","https://base-sepolia.public.blastapi.io"]},"base":{cid:8453,caip:"eip155:8453",rpcs:["https://mainnet.base.org","https://rpc.ankr.com/base"]},"mainnet":{cid:1,caip:"eip155:1",rpcs:["https://rpc.ankr.com/eth","https://eth.public.blastapi.io"]}};
 const AZ={1:{usdc:"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"},8453:{usdc:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"},11155111:{usdc:"0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"},84532:{usdc:"0x036CbD53842c5426634e7929541eC2318f3dCF7e"}};
-const D={usdc:6,usdt:6,eth:18};
+const DD={usdc:6,usdt:6,eth:18};
 const E20=["function balanceOf(address) view returns (uint256)","function allowance(address,address) view returns (uint256)","function approve(address,uint256) returns (bool)"];
 const CAB=["function openChannel(address,address,uint256,uint64,uint64,bytes32,uint8) external payable returns (bytes32)","function deposit(bytes32,uint256) external payable","function getChannel(bytes32) external view returns (tuple(address,address,address,uint64,uint64,uint256,bool,uint64,uint64,uint8))","event ChannelOpened(bytes32 indexed,address indexed,address indexed,address,uint64,uint64)"];
 
-function rN(n){const k=(n||"").toLowerCase();if(N[k])return{...N[k],nm:k};for(const[m,v]of Object.entries(N)){if(v.caip===k||String(v.cid)===k)return{...v,nm:m};}return null;}
-function caip(n){const r=rN(n);return r?.caip||null;}
+function rN(n){const k=(n||"").toLowerCase();if(NW[k])return{...NW[k],nm:k};for(const[m,v]of Object.entries(NW)){if(v.caip===k||String(v.cid)===k)return{...v,nm:m};}return null;}
+function caip(n){return rN(n)?.caip||null;}
 function nE(u){return(u||"").trim().replace(/\/+$/,"");}
-function rA(a,cid){if(!a)return{addr:ZA,sym:"eth",dec:18,isE:true};const l=(a+"").toLowerCase();if(l==="eth"||l===ZA)return{addr:ZA,sym:"eth",dec:18,isE:true};const x=AZ[cid]?.[l];if(x)return{addr:x,sym:l,dec:D[l]||18,isE:false};if(l.startsWith("0x")&&l.length===42){for(const m of Object.values(AZ))for(const[s,ad]of Object.entries(m))if(ad.toLowerCase()===l)return{addr:ad,sym:s,dec:D[s]||18,isE:false};}return{addr:ZA,sym:"eth",dec:18,isE:true};}
+function rA(a,cid){if(!a)return{addr:ZA,sym:"eth",dec:18,isE:true};const l=(a+"").toLowerCase();if(l==="eth"||l===ZA)return{addr:ZA,sym:"eth",dec:18,isE:true};const x=AZ[cid]?.[l];if(x)return{addr:x,sym:l,dec:DD[l]||18,isE:false};if(l.startsWith("0x")&&l.length===42){for(const m of Object.values(AZ))for(const[s,ad]of Object.entries(m))if(ad.toLowerCase()===l)return{addr:ad,sym:s,dec:DD[s]||18,isE:false};}return{addr:ZA,sym:"eth",dec:18,isE:true};}
 function gS(o){if(!o?.asset)return"ETH";const a=(o.asset+"").toLowerCase();if(a===ZA||a==="eth")return"ETH";for(const m of Object.values(AZ))for(const[s,ad]of Object.entries(m))if(ad.toLowerCase()===a)return s.toUpperCase();return"TOKEN";}
 function fA(r,d=6){if(!r||r==="0")return"0";try{const n=BigInt(r),p=10n**BigInt(d),w=n/p,f=(n%p).toString().padStart(d,"0");if(w===0n){const i=f.search(/[1-9]/);return i<0?"0":"0."+f.slice(0,Math.min(d,i+6)).replace(/0+$/,"");}const fr=f.slice(0,4).replace(/0+$/,"");return fr?w+"."+fr:""+w;}catch{return r;}}
-function fT(r,s){return fA(r,D[s?.toLowerCase()]||18);}
+function fT(r,s){return fA(r,DD[s?.toLowerCase()]||18);}
 function sA(a){return a?a.slice(0,6)+"..."+a.slice(-4):"-";}
 function oD(o){const h=o?.extensions?.["statechannel-hub-v1"],s=h&&typeof h.stream==="object"?h.stream:null,fb=(o?.maxAmountRequired??"0")+"",fa=/^[0-9]+$/.test(fb)?fb:"0",ra=(s?.amount??"")+"";return/^[0-9]+$/.test(ra)?ra:fa;}
 function wT(p,ms){let t;return Promise.race([p,new Promise((_,r)=>{t=setTimeout(()=>r(new Error("Timeout "+ms+"ms")),ms);})]).finally(()=>clearTimeout(t));}
@@ -210,84 +302,52 @@ function wT(p,ms){let t;return Promise.race([p,new Promise((_,r)=>{t=setTimeout(
 class Agent{
   constructor(o){this.w=new ethers.Wallet(o.pk);this.ad=this.w.address;this.net=o.net||"sepolia";this.mA=o.mA||"5000000000000";this.mF=o.mF||"5000";this.ca=o.ca||DC;this.s={ch:{},pay:[]};this._p=null;this._pt=0;this._rpc=o.rpc||"";this._ld();}
   _k(){return"x402s.pay:"+this.ad.toLowerCase()+":"+this.net+":"+this.ca.toLowerCase();}
-  _ld(){try{const r=localStorage.getItem(this._k());if(r){const p=JSON.parse(r);this.s={ch:p?.state?.ch||p?.state?.channels||p?.ch||{},pay:p?.state?.pay||p?.state?.payments||p?.pay||[]};}}catch{}}
+  _ld(){try{const r=localStorage.getItem(this._k());if(r){const p=JSON.parse(r);this.s={ch:p?.state?.ch||p?.ch||{},pay:p?.state?.pay||p?.pay||[]};}}catch{}}
   _sv(){try{localStorage.setItem(this._k(),JSON.stringify({v:1,t:Date.now(),state:this.s}));}catch{}}
   ni(){return rN(this.net);}
-
-  // RPC with fallback
-  async gp(){if(this._p&&Date.now()-this._pt<300000)return this._p;this._p=null;const n=this.ni(),cid=n?.cid||11155111,rpcs=[...(this._rpc?[this._rpc]:[]),...(n?.rpcs||[])];for(const r of rpcs){try{const p=new ethers.providers.StaticJsonRpcProvider({url:r,timeout:8000},cid);const b=await wT(p.getBlockNumber(),8000);if(typeof b!=="number"||b<1)throw 0;this._p=p;this._pt=Date.now();return p;}catch{}}throw new Error("No responsive RPC. Add a custom RPC with CORS support.");}
-
-  // Discover 402 offers
+  async gp(){if(this._p&&Date.now()-this._pt<300000)return this._p;this._p=null;const n=this.ni(),cid=n?.cid||11155111,rpcs=[...(this._rpc?[this._rpc]:[]),...(n?.rpcs||[])];for(const r of rpcs){try{const p=new ethers.providers.StaticJsonRpcProvider({url:r,timeout:8000},cid);const b=await wT(p.getBlockNumber(),8000);if(typeof b!=="number"||b<1)throw 0;this._p=p;this._pt=Date.now();return p;}catch{}}throw new Error("No RPC available. Add a custom RPC in settings.");}
+  async getBal(){const p=await this.gp(),eb=await p.getBalance(this.ad),n=this.ni(),cid=n?.cid||11155111,u=AZ[cid]?.usdc;let ub="0";if(u){try{const tk=new ethers.Contract(u,E20,p);ub=(await tk.balanceOf(this.ad)).toString();}catch{}}return{eth:ethers.utils.formatEther(eb),usdc:fA(ub,6)};}
   async disc(url){const r=await wT(fetch(url,{method:"GET",redirect:"manual"}),15000);if(r.status!==402)return{st:r.status,of:[]};const b=await r.json().catch(()=>null);let o=b?.accepts||b?.offers||[];o=o.map(x=>{const e=x.extensions||{},h=e["statechannel-hub-v1"],d=e["statechannel-direct-v1"];return{...x,scheme:h?"statechannel-hub-v1":d?"statechannel-direct-v1":x.scheme||"?",hEp:nE(h?.hubEndpoint||""),pAd:h?.payeeAddress||d?.payeeAddress||x.payeeAddress||null,inv:h?.invoiceId||x.invoiceId||null};});return{st:402,of:o,raw:b};}
-
-  // Choose best offer
   choose(of,rt="auto"){const nc=caip(this.net),fi=of.filter(o=>{const oc=caip(o.network);return!nc||!oc||oc===nc;}),hs=fi.filter(o=>o.scheme==="statechannel-hub-v1"),ds=fi.filter(o=>o.scheme==="statechannel-direct-v1");const am=o=>{try{return BigInt(oD(o));}catch{return 0n;}};const rH=o=>{const ep=nE(o.hEp);if(!ep)return 0;const c=this.s.ch["hub:"+ep];if(!c)return 0;try{return BigInt(c.bA||"0")>=am(o)?2:1;}catch{return 1;}};const pk=(l,f)=>{if(!l.length)return null;const s=l.map((o,i)=>({o,i,r:f(o),a:am(o)}));s.sort((a,b)=>a.r!==b.r?b.r-a.r:a.a<b.a?-1:a.a>b.a?1:a.i-b.i);return s[0].o;};if(rt==="hub")return pk(hs,rH);if(rt==="direct")return pk(ds,()=>0);return pk(hs,rH)||pk(ds,()=>0);}
-
-  // Hydrate channel from hub
   async hyd(ep){const e=nE(ep);if(!e)return null;const ck="hub:"+e;if(this.s.ch[ck])return this.s.ch[ck];let hi=null;try{const r=await wT(fetch(e+"/.well-known/x402"),10000);if(r.ok)hi=await r.json();}catch{}const ha=hi?.address?ethers.utils.getAddress(hi.address):null;try{const r=await wT(fetch(e+"/v1/channels?payer="+this.ad),8000);if(r.ok){const d=await r.json(),cs=d.channels||d;if(Array.isArray(cs)&&cs.length){const c=cs[0];this.s.ch[ck]={id:c.channelId,pB:ha||c.participantB,ast:c.asset||ZA,sym:gS({asset:c.asset}).toLowerCase(),n:Number(c.stateNonce||0),bA:String(c.balA||"0"),bB:String(c.balB||"0"),hEp:e};this._sv();return this.s.ch[ck];}}}catch{}return null;}
-
-  // Open channel on-chain
-  async openCh(peer,asset,amt,cb){const p=await this.gp(),sg=this.w.connect(p),ct=new ethers.Contract(this.ca,CAB,sg),n=this.ni(),cid=n?.cid||11155111,ra=rA(asset,cid),ab=ethers.BigNumber.from(amt),sl=ethers.utils.hexlify(ethers.utils.randomBytes(32));if(!ra.isE){const tk=new ethers.Contract(ra.addr,E20,sg),al=await wT(tk.allowance(this.ad,this.ca),10000);if(al.lt(ab)){cb?.("Approving token spend...");const tx=await wT(tk.approve(this.ca,ethers.constants.MaxUint256),30000);await wT(tx.wait(1),120000);}}const to=ra.isE?{value:ab,gasLimit:350000}:{gasLimit:350000};cb?.("Sending openChannel tx...");const tx=await wT(ct.openChannel(ethers.utils.getAddress(peer),ra.addr,ab,86400,Math.floor(Date.now()/1000)+2592000,sl,0,to),30000);cb?.("Confirming...");const rc=await wT(tx.wait(1),120000),ev=rc.events?.find(e=>e.event==="ChannelOpened");return{cId:ev?.args?.channelId||Z32,tx:tx.hash,amt:amt+"",ast:ra.addr,sym:ra.sym,pB:peer};}
-
-  // Fund channel
+  async openCh(peer,asset,amt,cb){const p=await this.gp(),sg=this.w.connect(p),ct=new ethers.Contract(this.ca,CAB,sg),n=this.ni(),cid=n?.cid||11155111,ra=rA(asset,cid),ab=ethers.BigNumber.from(amt),sl=ethers.utils.hexlify(ethers.utils.randomBytes(32));if(!ra.isE){const tk=new ethers.Contract(ra.addr,E20,sg),al=await wT(tk.allowance(this.ad,this.ca),10000);if(al.lt(ab)){cb?.("Approving token...");const tx=await wT(tk.approve(this.ca,ethers.constants.MaxUint256),30000);await wT(tx.wait(1),120000);}}const to=ra.isE?{value:ab,gasLimit:350000}:{gasLimit:350000};cb?.("Opening channel...");const tx=await wT(ct.openChannel(ethers.utils.getAddress(peer),ra.addr,ab,86400,Math.floor(Date.now()/1000)+2592000,sl,0,to),30000);cb?.("Confirming...");const rc=await wT(tx.wait(1),120000),ev=rc.events?.find(e=>e.event==="ChannelOpened");return{cId:ev?.args?.channelId||Z32,tx:tx.hash,amt:amt+"",ast:ra.addr,sym:ra.sym,pB:peer};}
   async fundCh(cId,amt){const p=await this.gp(),sg=this.w.connect(p),ct=new ethers.Contract(this.ca,CAB,sg),ch=await wT(ct.getChannel(cId),10000),aa=ch[2],ie=aa===ZA,ab=ethers.BigNumber.from(amt);if(!ie){const tk=new ethers.Contract(aa,E20,sg),al=await wT(tk.allowance(this.ad,this.ca),10000);if(al.lt(ab)){const tx=await wT(tk.approve(this.ca,ethers.constants.MaxUint256),30000);await wT(tx.wait(1),120000);}}const to=ie?{value:ab,gasLimit:200000}:{gasLimit:200000};const tx=await wT(ct.deposit(cId,ab,to),30000);await wT(tx.wait(1),120000);return{cId,tx:tx.hash};}
-
-  // Ensure channel ready for offer
-  async ensure(of,cb){const ep=nE(of.hEp||""),ck="hub:"+ep;if(ep&&!this.s.ch[ck]){cb?.("Checking hub for channel...");await this.hyd(ep);}const ch=this.s.ch[ck],amt=BigInt(oD(of)),tgt=amt*100n,cur=ch?BigInt(ch.bA||"0"):0n;if(ch&&cur>=amt)return;const need=tgt>cur?tgt-cur:tgt;let hi=null;try{const r=await wT(fetch(ep+"/.well-known/x402"),10000);if(r.ok)hi=await r.json();}catch{}if(!ch){if(!hi?.address)throw new Error("Hub address not found");cb?.("Opening channel on-chain...");const res=await this.openCh(hi.address,of.asset||"eth",need+"",cb);this.s.ch[ck]={id:res.cId,pB:res.pB,ast:res.ast,sym:res.sym,n:0,bA:need+"",bB:"0",hEp:ep};this._sv();return;}cb?.("Funding channel...");const res=await this.fundCh(ch.id,need+"");ch.bA=(cur+need)+"";this._sv();}
-
-  // EIP-712 signing (from scp-agent)
+  async ensure(of,cb){const ep=nE(of.hEp||""),ck="hub:"+ep;if(ep&&!this.s.ch[ck]){cb?.("Checking hub...");await this.hyd(ep);}const ch=this.s.ch[ck],amt=BigInt(oD(of)),tgt=amt*100n,cur=ch?BigInt(ch.bA||"0"):0n;if(ch&&cur>=amt)return;const need=tgt>cur?tgt-cur:tgt;let hi=null;try{const r=await wT(fetch(ep+"/.well-known/x402"),10000);if(r.ok)hi=await r.json();}catch{}if(!ch){if(!hi?.address)throw new Error("Hub address not found");cb?.("Opening channel on-chain...");const res=await this.openCh(hi.address,of.asset||"eth",need+"",cb);this.s.ch[ck]={id:res.cId,pB:res.pB,ast:res.ast,sym:res.sym,n:0,bA:need+"",bB:"0",hEp:ep};this._sv();return;}cb?.("Funding channel...");const res=await this.fundCh(ch.id,need+"");ch.bA=(cur+need)+"";this._sv();}
   bds(cid){return ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(["bytes32","bytes32","bytes32","uint256","address"],[ethers.utils.keccak256(ethers.utils.toUtf8Bytes("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")),ethers.utils.keccak256(ethers.utils.toUtf8Bytes("X402StateChannel")),ethers.utils.keccak256(ethers.utils.toUtf8Bytes("1")),cid,this.ca]));}
   sig(st,cid){const TH=ethers.utils.keccak256(ethers.utils.toUtf8Bytes("ChannelState(bytes32 channelId,uint64 stateNonce,uint256 balA,uint256 balB,bytes32 locksRoot,uint64 stateExpiry,bytes32 contextHash)"));const s2=ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(["bytes32","bytes32","uint64","uint256","uint256","bytes32","uint64","bytes32"],[TH,st.channelId,st.stateNonce,st.balA,st.balB,st.locksRoot||Z32,st.stateExpiry||0,st.contextHash||Z32]));const dm=this.bds(cid),dg=ethers.utils.keccak256(ethers.utils.solidityPack(["string","bytes32","bytes32"],["\x19\x01",dm,s2]));return ethers.utils.joinSignature(this.w._signingKey().signDigest(dg));}
-
-  // Full pay flow: discover -> ensure -> sync -> quote -> sign -> issue -> paid retry
   async payUrl(url,rt,cb){
     cb?.("Discovering offers...");
     const disc=await this.disc(url);
     if(disc.st!==402)return{skip:true,st:disc.st};
     if(!disc.of.length)throw new Error("No offers in 402 response");
     const of=this.choose(disc.of,rt);
-    if(!of)throw new Error("No compatible offer for network/route");
+    if(!of)throw new Error("No compatible offer for network");
     if(of.scheme!=="statechannel-hub-v1"||!of.hEp)throw new Error("Only hub route supported");
     if(!of.pAd)throw new Error("Offer missing payeeAddress");
     const ep=nE(of.hEp),ck="hub:"+ep,n=this.ni(),cid=n?.cid||11155111,ai=rA(of.asset||"eth",cid);
-
-    // Ensure channel
     cb?.("Ensuring channel...");
     await this.ensure(of,cb);
     if(!this.s.ch[ck])throw new Error("Channel setup failed");
     const ch=this.s.ch[ck];
-
-    // Sync state from hub
     if(ch.id){try{const r=await wT(fetch(ep+"/v1/channels/"+encodeURIComponent(ch.id)),10000);if(r.ok){const b=await r.json().catch(()=>null),ls=b?.latestState;if(ls){ch.n=Number(ls.stateNonce??ch.n??0);ch.bA=String(ls.balA??ch.bA??"0");ch.bB=String(ls.balB??ch.bB??"0");}}}catch{}}
-
     const pid="pay_"+Date.now().toString(36),inv=of.inv||"inv_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,8);
     const da=oD(of);
     const ctx=ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(["address","string","string","string"],[of.pAd||ZA,"GET",pid,inv]));
-
-    // Quote
-    cb?.("Getting quote from hub...");
+    cb?.("Getting quote...");
     const qr=await wT(fetch(ep+"/v1/tickets/quote",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({invoiceId:inv,paymentId:pid,channelId:ch.id,payee:of.pAd,asset:of.asset,amount:da,maxFee:this.mF,quoteExpiry:Math.floor(Date.now()/1000)+120,contextHash:ctx})}),15000);
     if(!qr.ok){const e=await qr.json().catch(()=>({}));throw new Error(e.error||e.message||"Quote failed "+qr.status);}
     const q=await qr.json(),td=q.totalDebit||q.ticketDraft?.totalDebit||q.amount||da;
-
-    // Build state
     let cA=BigInt(ch.bA||"0");const cB=BigInt(ch.bB||"0"),db=BigInt(td);
-    if(cA<db)throw new Error("Insufficient channel balance ("+fT(cA+"",ai.sym)+" < "+fT(db+"",ai.sym)+")");
+    if(cA<db)throw new Error("Insufficient channel balance");
     const ns={channelId:ch.id,stateNonce:(ch.n||0)+1,balA:(cA-db)+"",balB:(cB+db)+"",locksRoot:Z32,stateExpiry:Math.floor(Date.now()/1000)+3600,contextHash:ctx};
-
-    // Sign
-    cb?.("Signing state (EIP-712)...");
+    cb?.("Signing...");
     const sg=this.sig(ns,cid);
-
-    // Issue ticket
     cb?.("Issuing ticket...");
     const ir=await wT(fetch(ep+"/v1/tickets/issue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({quote:q,channelState:ns,sigA:sg})}),15000);
     if(!ir.ok){const e=await ir.json().catch(()=>({}));throw new Error(e.error||e.message||"Issue failed "+ir.status);}
     const is=await ir.json(),tk={ticketId:is.ticketId,hub:is.hub,payee:is.payee,invoiceId:is.invoiceId,paymentId:is.paymentId,asset:is.asset,amount:is.amount,feeCharged:is.feeCharged,totalDebit:is.totalDebit,expiry:is.expiry,policyHash:is.policyHash,sig:is.sig};
     const ack=is.channelAck||{};
-    if(!ack.stateHash)throw new Error("Hub missing channelAck.stateHash");
-
-    // Paid retry
+    if(!ack.stateHash)throw new Error("Hub missing channelAck");
     cb?.("Sending paid request...");
     const pl=JSON.stringify({scheme:"statechannel-hub-v1",paymentId:pid,invoiceId:inv,ticket:tk,channelProof:{channelId:ns.channelId,stateNonce:ns.stateNonce,stateHash:ack.stateHash,sigA:sg,channelState:ns}});
     const pr=await wT(fetch(url,{method:"GET",headers:{"PAYMENT-SIGNATURE":pl}}),15000);
@@ -301,53 +361,147 @@ class Agent{
 }
 
 // ======================================================================
-// UI
+// Wallet persistence & UI
 // ======================================================================
-let ag=null,tUrl="";
+const WK="x402s.wallet";
+let ag=null,tUrl="",curOffer=null;
+
 function show(id){document.querySelectorAll('.v').forEach(v=>v.classList.remove('on'));document.getElementById(id).classList.add('on');}
 function ss(m){const w=document.getElementById('stW'),t=document.getElementById('stT');if(m){w.style.display='block';t.textContent=m;}else w.style.display='none';}
-function reset(){document.getElementById('okO').classList.remove('on');document.getElementById('erO').classList.remove('on');const b=document.getElementById('bPay');b.className='bt';b.disabled=false;document.getElementById('bPT').textContent='Pay';ss(null);}
-function back(){reset();show('vCfg');}
 
-// URL params pre-fill
-const pp=new URLSearchParams(location.search);
-if(pp.get('url'))document.getElementById('iUrl').value=pp.get('url');
-if(pp.get('network'))document.getElementById('iNet').value=pp.get('network');
-if(pp.get('route'))document.getElementById('iRt').value=pp.get('route');
-if(pp.get('rpc'))document.getElementById('iRpc').value=pp.get('rpc');
+// Load saved wallet
+function loadWallet(){
+  try{
+    const d=JSON.parse(localStorage.getItem(WK));
+    if(d?.pk){
+      const s=JSON.parse(localStorage.getItem("x402s.settings")||"{}");
+      ag=new Agent({pk:d.pk,net:s.net||"sepolia",rpc:s.rpc||""});
+      document.getElementById('hSet').style.display='flex';
+      document.getElementById('rAddr').textContent=sA(ag.ad);
+      document.getElementById('sAddr').textContent=ag.ad;
+      document.getElementById('rNetL').textContent=(ag.net||"sepolia").replace(/^./,c=>c.toUpperCase()).replace("-s"," S").replace("-","");
+      show('vReady');
+      refreshBal();
+      return true;
+    }
+  }catch{}
+  return false;
+}
 
-// Discover + show payment screen
+function saveWallet(pk){
+  localStorage.setItem(WK,JSON.stringify({pk,t:Date.now()}));
+}
+
+function saveSettings(){
+  const net=document.getElementById('sNet').value;
+  const rpc=document.getElementById('sRpc').value.trim();
+  const rt=document.getElementById('sRt').value;
+  localStorage.setItem("x402s.settings",JSON.stringify({net,rpc,rt}));
+  if(ag){
+    const d=JSON.parse(localStorage.getItem(WK));
+    ag=new Agent({pk:d.pk,net,rpc});
+    document.getElementById('rAddr').textContent=sA(ag.ad);
+    document.getElementById('rNetL').textContent=net.replace(/^./,c=>c.toUpperCase()).replace("-s"," S").replace("-","");
+    refreshBal();
+  }
+}
+
+function loadSettings(){
+  try{
+    const s=JSON.parse(localStorage.getItem("x402s.settings")||"{}");
+    if(s.net)document.getElementById('sNet').value=s.net;
+    if(s.rpc)document.getElementById('sRpc').value=s.rpc;
+    if(s.rt)document.getElementById('sRt').value=s.rt;
+  }catch{}
+}
+
+async function refreshBal(){
+  if(!ag)return;
+  document.getElementById('rBal').textContent="...";
+  try{
+    const b=await ag.getBal();
+    const n=ag.ni(),cid=n?.cid||11155111;
+    const hasU=AZ[cid]?.usdc;
+    document.getElementById('rBal').textContent=hasU?(b.usdc+" USDC"):(parseFloat(b.eth).toFixed(4)+" ETH");
+  }catch(e){document.getElementById('rBal').textContent="Error";}
+}
+
+// Create wallet
+function createWallet(){
+  const w=ethers.Wallet.createRandom();
+  saveWallet(w.privateKey);
+  loadSettings();
+  loadWallet();
+}
+
+// Import
+function showImport(){show('vImp');}
+function importWallet(){
+  let k=document.getElementById('iImpKey').value.trim();
+  if(!k)return alert("Paste a private key");
+  if(!k.startsWith("0x"))k="0x"+k;
+  try{new ethers.Wallet(k);}catch{return alert("Invalid private key");}
+  saveWallet(k);
+  loadSettings();
+  loadWallet();
+}
+
+// Settings
+function goSet(){
+  loadSettings();
+  document.getElementById('sAddr').textContent=ag?.ad||"-";
+  document.getElementById('keyR').style.display='none';
+  document.getElementById('bExp').textContent='Reveal';
+  show('vSet');
+}
+function goReady(){show('vReady');refreshBal();}
+function showKey(){
+  const d=JSON.parse(localStorage.getItem(WK)||"{}");
+  if(!d.pk)return;
+  const el=document.getElementById('keyR'),k=document.getElementById('sKey'),b=document.getElementById('bExp');
+  if(el.style.display==='none'){el.style.display='block';k.textContent=d.pk;b.textContent='Hide';}
+  else{el.style.display='none';b.textContent='Reveal';}
+}
+function resetWallet(){
+  if(!confirm("Remove wallet? Make sure you've saved your private key."))return;
+  localStorage.removeItem(WK);ag=null;
+  document.getElementById('hSet').style.display='none';
+  show('vWel');
+}
+function cpAddr(){if(ag)navigator.clipboard?.writeText(ag.ad);}
+
+// Discover
 async function discover(){
-  const url=document.getElementById('iUrl').value.trim(),key=document.getElementById('iKey').value.trim(),net=document.getElementById('iNet').value,rpc=document.getElementById('iRpc').value.trim(),rt=document.getElementById('iRt').value;
-  if(!url)return alert("Enter a target URL");
-  if(!key)return alert("Enter agent private key");
+  const url=document.getElementById('iUrl').value.trim();
+  if(!url)return alert("Enter a URL");
+  if(!ag)return alert("Set up wallet first");
   const btn=document.getElementById('bDisc');
   btn.disabled=true;btn.innerHTML='<span class="sp"></span> Discovering...';
   try{
-    ag=new Agent({pk:key,net,rpc:rpc||undefined});tUrl=url;
+    const s=JSON.parse(localStorage.getItem("x402s.settings")||"{}"),rt=s.rt||"hub";
     const d=await ag.disc(url);
-    if(d.st!==402){alert("Server returned "+d.st+" (not 402)");btn.disabled=false;btn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><span>Discover & Pay</span>';return;}
+    if(d.st!==402){alert("Server returned "+d.st+" (not 402)");throw new Error("skip");}
     if(!d.of.length)throw new Error("No offers in 402 response");
     const of=ag.choose(d.of,rt);
-    if(!of)throw new Error("No compatible offer");
-    const sym=gS(of),nn=rN(of.network),dr=oD(of),dec=D[sym.toLowerCase()]||18,ha=fA(dr,dec);
+    if(!of)throw new Error("No compatible offer for network");
+    curOffer=of;tUrl=url;
+    const sym=gS(of),nn=rN(of.network),dr=oD(of),dec=DD[sym.toLowerCase()]||18,ha=fA(dr,dec);
     const u=new URL(url);
-    document.getElementById('oMerch').textContent=u.hostname+u.pathname;
+    document.getElementById('oMerch').textContent=u.hostname;
     document.getElementById('oAmt').textContent=ha;
     document.getElementById('oSym').textContent=sym;
-    document.getElementById('oDesc').textContent=d.raw?.description||'Paid API request';
-    document.getElementById('oNet').textContent=(nn?.nm||of.network||net).replace(/^./,c=>c.toUpperCase());
+    document.getElementById('oDesc').textContent=d.raw?.description||u.pathname;
+    document.getElementById('oNet').textContent=(nn?.nm||of.network||ag.net).replace(/^./,c=>c.toUpperCase()).replace("-s"," S");
     document.getElementById('oRoute').textContent='Hub (state channel)';
     document.getElementById('oAddr').textContent=sA(ag.ad);
-    document.getElementById('bPT').textContent="Pay "+ha+" "+sym;
-    // Channel
+    document.getElementById('bPT').textContent="Confirm & Pay "+ha+" "+sym;
     const ep=nE(of.hEp);
     if(ep)await ag.hyd(ep);
     const ch=ep?ag.s.ch["hub:"+ep]:null;
     if(ch){document.getElementById('chW').style.display='block';document.getElementById('chV').textContent=fT(ch.bA||"0",gS({asset:ch.ast}).toLowerCase())+" "+gS({asset:ch.ast});}else document.getElementById('chW').style.display='none';
     show('vPay');
-  }catch(e){alert("Failed: "+e.message);}
-  btn.disabled=false;btn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><span>Discover & Pay</span>';
+  }catch(e){if(e.message!=="skip")alert("Failed: "+e.message);}
+  btn.disabled=false;btn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>Pay</span>';
 }
 
 // Pay
@@ -356,28 +510,39 @@ async function pay(){
   const btn=document.getElementById('bPay'),bt=document.getElementById('bPT');
   btn.classList.add('ld');btn.disabled=true;
   try{
-    const r=await ag.payUrl(tUrl,document.getElementById('iRt').value,m=>{ss(m);bt.innerHTML='<span class="sp"></span> '+m;});
-    if(r.skip){ss(null);btn.classList.remove('ld');btn.disabled=false;bt.textContent='Pay';alert("Server returned "+r.st);return;}
+    const s=JSON.parse(localStorage.getItem("x402s.settings")||"{}"),rt=s.rt||"hub";
+    const r=await ag.payUrl(tUrl,rt,m=>{ss(m);bt.innerHTML='<span class="sp"></span> '+m;});
+    if(r.skip){ss(null);btn.classList.remove('ld');btn.disabled=false;bt.textContent='Confirm & Pay';alert("Server returned "+r.st);return;}
     if(!r.ok)throw new Error("Paid request returned HTTP "+r.st);
-    // Success
     ss(null);btn.classList.remove('ld');btn.classList.add('ok');
     bt.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg> Paid';
-    const sym=r.ai?.sym?.toUpperCase()||gS(r.of),dec=D[sym.toLowerCase()]||18;
+    const sym=r.ai?.sym?.toUpperCase()||gS(r.of),dec=DD[sym.toLowerCase()]||18;
     document.getElementById('okS').textContent=fA(r.amt,dec)+" "+sym+" paid via hub. Zero gas.";
-    document.getElementById('okT').textContent="ticket:"+(r.tk?.ticketId||r.pid||"").slice(0,8)+"...";
+    document.getElementById('okT').textContent="ticket:"+(r.tk?.ticketId||r.pid||"").slice(0,12)+"...";
     document.getElementById('okD').textContent=r.fee&&r.fee!=="0"?"Hub fee: "+fA(r.fee,dec)+" "+sym:"Zero hub fee";
     setTimeout(()=>document.getElementById('okO').classList.add('on'),400);
-    if(window.parent!==window)window.parent.postMessage({type:"x402:payment:success",ticketId:r.tk?.ticketId,payId:r.pid,amount:r.amt,route:"hub"},"*");
+    if(window.parent!==window)window.parent.postMessage({type:"x402:payment:success",ticketId:r.tk?.ticketId,payId:r.pid,amount:r.amt},"*");
   }catch(e){
-    ss(null);btn.classList.remove('ld');btn.className='bt';btn.disabled=false;bt.textContent='Pay';
+    ss(null);btn.classList.remove('ld');btn.className='bt';btn.disabled=false;bt.textContent='Confirm & Pay';
     document.getElementById('erM').textContent=e.message;
     document.getElementById('erO').classList.add('on');
   }
 }
+
+function resetPay(){document.getElementById('erO').classList.remove('on');const b=document.getElementById('bPay');b.className='bt';b.disabled=false;document.getElementById('bPT').textContent='Confirm & Pay';ss(null);}
+function backToReady(){document.getElementById('okO').classList.remove('on');document.getElementById('erO').classList.remove('on');resetPay();show('vReady');refreshBal();}
 function cpTx(){const el=document.getElementById('okT'),o=el.textContent;navigator.clipboard?.writeText(o);el.textContent='Copied!';setTimeout(()=>el.textContent=o,1200);}
 
+// URL params
+const pp=new URLSearchParams(location.search);
+if(pp.get('url'))document.getElementById('iUrl').value=pp.get('url');
+
 // iframe config
-window.addEventListener('message',e=>{if(e.data?.type==='x402:config'){if(e.data.url)document.getElementById('iUrl').value=e.data.url;if(e.data.network)document.getElementById('iNet').value=e.data.network;}});
+window.addEventListener('message',e=>{if(e.data?.type==='x402:config'){if(e.data.url)document.getElementById('iUrl').value=e.data.url;}});
+
+// Boot
+loadSettings();
+if(!loadWallet())show('vWel');
 </script>
 </body>
 </html>
