@@ -62,6 +62,13 @@ function verifyPayment(header, expect) {
   if (expect.amount && payload.ticket.amount !== expect.amount) return { ok: false, error: "wrong amount", signer };
   if (payload.ticket.expiry && payload.ticket.expiry < nowSec()) return { ok: false, error: "expired", signer };
 
+  // SECURITY: ensure wrapper paymentId matches signed ticket paymentId
+  // Without this, a client could tamper the wrapper paymentId to confuse replay caches.
+  if (payload.paymentId && payload.ticket.paymentId &&
+      payload.paymentId !== payload.ticket.paymentId) {
+    return { ok: false, error: "paymentId mismatch between wrapper and ticket", signer };
+  }
+
   // Channel proof verification
   const cp = payload.channelProof;
   if (cp) {

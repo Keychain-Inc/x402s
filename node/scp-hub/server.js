@@ -122,6 +122,7 @@ const rateWindow = new Map();
 let lastQuoteSweepAt = 0;
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+const TRUST_PROXY = process.env.TRUST_PROXY === "1";
 const CORS_HEADERS = [
   "Content-Type",
   "Payment-Signature",
@@ -355,9 +356,13 @@ function requirePayeeAuth(req, res, pathname, payee, body) {
 }
 
 function resolveClientIp(req) {
-  const fwd = req.headers["x-forwarded-for"];
-  if (typeof fwd === "string" && fwd.trim()) {
-    return fwd.split(",")[0].trim();
+  // Only trust X-Forwarded-For when behind a known reverse proxy.
+  // Without this, attackers can spoof the header to bypass rate limits.
+  if (TRUST_PROXY) {
+    const fwd = req.headers["x-forwarded-for"];
+    if (typeof fwd === "string" && fwd.trim()) {
+      return fwd.split(",")[0].trim();
+    }
   }
   return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : "unknown";
 }
@@ -755,6 +760,11 @@ async function handleRequest(req, res) {
       if (ticketPayment.status !== "issued") {
         return sendJson(res, 404, makeError("SCP_007_CHANNEL_NOT_FOUND", "ticket not found or already refunded"));
       }
+
+      // AUTH: require payee auth — only the payee who received the ticket can trigger refunds
+      const refundPayee = String(ticketPayment.payee || "").toLowerCase();
+      if (!requirePayeeAuth(req, res, pathname, refundPayee, body)) return;
+
       if (BigInt(body.refundAmount) > BigInt(ticketPayment.amount)) {
         return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "refund exceeds original amount"));
       }
@@ -765,7 +775,24 @@ async function handleRequest(req, res) {
         return sendJson(res, 409, makeError("SCP_007_CHANNEL_NOT_FOUND", "channel state unavailable for refund"));
       }
       const latestState = ch.latestState;
-      const refundDebit = BigInt(ticketPayment.totalDebit || ticketPayment.amount || "0");
+
+      // Refund math: refund the requested amount, plus pro-rata fee portion.
+      // If refundAmount == original amount, refund the full totalDebit (amount + fee).
+      // If partial, refund amount + proportional fee.
+      const originalAmount = BigInt(ticketPayment.amount || "0");
+      const originalTotalDebit = BigInt(ticketPayment.totalDebit || ticketPayment.amount || "0");
+      const originalFee = originalTotalDebit - originalAmount;
+      const refundAmount = BigInt(body.refundAmount);
+      let refundDebit;
+      if (refundAmount === originalAmount) {
+        // Full refund — return amount + entire fee
+        refundDebit = originalTotalDebit;
+      } else {
+        // Partial refund — return amount + pro-rata fee
+        const feeRefund = originalAmount > 0n ? (originalFee * refundAmount / originalAmount) : 0n;
+        refundDebit = refundAmount + feeRefund;
+      }
+
       const prevBalA = BigInt(latestState.balA || "0");
       const prevBalB = BigInt(latestState.balB || "0");
       if (refundDebit <= 0n) {
@@ -855,7 +882,13 @@ async function handleRequest(req, res) {
         latestNonce: 0,
         status: "open"
       };
-      return sendJson(res, 200, ch);
+      // SECURITY: redact signatures and raw state — these are close authorizations.
+      // Exposing both sigA+sigB would let anyone call cooperativeClose on-chain.
+      const { sigA, sigB, latestState, ...safe } = ch;
+      return sendJson(res, 200, {
+        ...safe,
+        hasSignedState: !!(sigA || sigB)
+      });
     }
 
     if (req.method === "GET" && pathname === "/v1/payee/inbox") {
@@ -1013,9 +1046,11 @@ async function handleRequest(req, res) {
         const txOpts = asset === ethers.constants.AddressZero
           ? { value: deposit, gasLimit: 200000 }
           : { gasLimit: 200000 };
+        // hubFlags=1: hub (caller/participantA) is the hub participant
+        const hubFlags = 1;
         const tx = await contract.openChannel(
           ethers.utils.getAddress(payee), asset, deposit,
-          challengePeriod, expiry, salt, txOpts
+          challengePeriod, expiry, salt, hubFlags, txOpts
         );
         const rc = await tx.wait(1);
         const ev = rc.events.find(e => e.event === "ChannelOpened");
@@ -1171,12 +1206,14 @@ async function handleRequest(req, res) {
       }
 
       // Atomically reserve unsettled entries to prevent concurrent double-settlement.
+      // SECURITY: only sum entries matching the requested asset to prevent cross-asset errors.
       let unsettled = 0n;
       const unsettledEntries = [];
+      const normalizedAsset = asset.toLowerCase();
       await store.tx((s) => {
         const entries = s.payeeLedger[payee] || [];
         for (const entry of entries) {
-          if (entry.status === "issued") {
+          if (entry.status === "issued" && String(entry.asset || "").toLowerCase() === normalizedAsset) {
             unsettled += BigInt(entry.amount);
             entry.status = "settling";
             entry.settlementId = settlementId;
