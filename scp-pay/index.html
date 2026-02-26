@@ -273,7 +273,7 @@ html,body{font-family:var(--f);background:var(--bg);color:var(--t1);-webkit-font
   <div class="ba" style="padding-top:16px"><button class="b2" onclick="goReady()">&#8592; Back</button></div>
 </div>
 
-<div class="ft"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>Secured by</span><a href="https://github.com/Keychain-Inc/x402s" target="_blank">x402s protocol</a><span style="margin-left:6px;opacity:.4">v9</span></div>
+<div class="ft"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>Secured by</span><a href="https://github.com/Keychain-Inc/x402s" target="_blank">x402s protocol</a><span style="margin-left:6px;opacity:.4">v10</span></div>
 
 </div></div>
 
@@ -302,11 +302,14 @@ function wT(p,ms){let t;return Promise.race([p,new Promise((_,r)=>{t=setTimeout(
 
 class Agent{
   constructor(o){this.w=new ethers.Wallet(o.pk);this.ad=this.w.address;this.net=o.net||"sepolia";this.mA=o.mA||"5000000000000";this.mF=o.mF||"5000";this.ca=o.ca||DC;this.s={ch:{},pay:[]};this._p=null;this._pt=0;this._rpc=o.rpc||"";this._ld();}
-  _k(){return"x402s.pay:"+this.ad.toLowerCase()+":"+this.net+":"+this.ca.toLowerCase();}
-  _k2(){return"x402s.scp-agent.state.v1:"+this.ad.toLowerCase()+":"+String(this.net||"").toLowerCase()+":"+this.ca.toLowerCase();}
-  _ld(){try{const r=localStorage.getItem(this._k());if(r){const p=JSON.parse(r);this.s={ch:p?.state?.ch||p?.ch||{},pay:p?.state?.pay||p?.pay||[]};if(Object.keys(this.s.ch).length)return;}}catch{}
-    // Fallback: read scp-agent's cached state
-    try{const r=localStorage.getItem(this._k2());if(r){const p=JSON.parse(r);const aCh=p?.state?.channels||p?.channels||{};if(Object.keys(aCh).length){console.log("[x402s] importing",Object.keys(aCh).length,"channels from scp-agent cache");for(const[k,v]of Object.entries(aCh)){if(!v?.channelId||v.channelId===Z32)continue;this.s.ch[k]={id:v.channelId,pB:v.participantB,ast:v.asset||ZA,sym:v.assetSymbol||gS({asset:v.asset}).toLowerCase(),n:Number(v.nonce||v.stateNonce||0),bA:String(v.balA||"0"),bB:String(v.balB||"0"),hEp:v.hubEndpoint||""};}this._sv();}}}catch(e){console.warn("[x402s] scp-agent import failed:",e.message);}}
+  _k(){return"x402s.scp-agent.state.v1:"+this.ad.toLowerCase()+":"+String(this.net||"").toLowerCase()+":"+this.ca.toLowerCase();}
+  _ld(){try{const r=localStorage.getItem(this._k());if(r){const p=JSON.parse(r);const aCh=p?.state?.channels||p?.channels||{};const aPay=p?.state?.payments||p?.payments||[];this.s={ch:{},pay:[]};for(const[k,v]of Object.entries(aCh)){if(!v?.channelId)continue;this.s.ch[k]={id:v.channelId,pB:v.participantB,ast:v.asset||ZA,sym:v.assetSymbol||gS({asset:v.asset}).toLowerCase(),n:Number(v.nonce||v.stateNonce||0),bA:String(v.balA||"0"),bB:String(v.balB||"0"),hEp:v.hubEndpoint||""};}if(Object.keys(this.s.ch).length)console.log("[x402s] loaded",Object.keys(this.s.ch).length,"channels from shared state");}}catch{}}
+  _sv(){try{
+    // Write back in scp-agent format so both apps stay in sync
+    const channels={};for(const[k,v]of Object.entries(this.s.ch)){channels[k]={channelId:v.id,participantB:v.pB,asset:v.ast,assetSymbol:v.sym,nonce:v.n,balA:v.bA,balB:v.bB,hubEndpoint:v.hEp};}
+    const existing=JSON.parse(localStorage.getItem(this._k())||"{}");
+    const merged={...existing,v:1,t:Date.now(),state:{...existing?.state,channels:{...existing?.state?.channels,...channels}}};
+    localStorage.setItem(this._k(),JSON.stringify(merged));}catch{}}
   _sv(){try{localStorage.setItem(this._k(),JSON.stringify({v:1,t:Date.now(),state:this.s}));}catch{}}
   ni(){return rN(this.net);}
   async gp(){if(this._p&&Date.now()-this._pt<300000)return this._p;this._p=null;const n=this.ni(),cid=n?.cid||11155111,rpcs=[...(this._rpc?[this._rpc]:[]),...(n?.rpcs||[])];for(const r of rpcs){try{const p=new ethers.providers.StaticJsonRpcProvider({url:r,timeout:12000},cid);const b=await wT(p.getBlockNumber(),12000);if(typeof b!=="number"||b<1)continue;this._p=p;this._pt=Date.now();return p;}catch{continue;}}throw new Error("No RPC available. Add a custom RPC in Settings.");}
@@ -483,9 +486,9 @@ function resetWallet(){
 }
 function clearCache(){
   if(!ag)return;
-  const k=ag._k();
-  ag.s={ch:{},pay:[]};
-  ag._sv();
+  ag.s.ch={};
+  // Also clear channels in shared localStorage
+  try{const r=JSON.parse(localStorage.getItem(ag._k())||"{}");if(r?.state)r.state.channels={};localStorage.setItem(ag._k(),JSON.stringify(r));}catch{}
   alert("Channel cache cleared for "+ag.net);
 }
 function cpAddr(){if(ag)navigator.clipboard?.writeText(ag.ad);}
@@ -561,7 +564,7 @@ if(pp.get('url'))document.getElementById('iUrl').value=pp.get('url');
 window.addEventListener('message',e=>{if(e.data?.type==='x402:config'){if(e.data.url)document.getElementById('iUrl').value=e.data.url;}});
 
 // Boot
-console.log("[x402s] scp-pay v9 loaded");
+console.log("[x402s] scp-pay v10 loaded");
 loadSettings();
 if(!loadWallet())show('vWel');
 </script>
