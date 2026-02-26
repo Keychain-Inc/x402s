@@ -272,16 +272,25 @@ contract X402StateChannel is IX402StateChannel {
         // Apply: shrink from, grow to
         from.totalBalance = from.totalBalance - amount;
         from.latestNonce = state.stateNonce;
+        // Record the post-rebalance balance split from the signed state.
+        // We set BOTH fundedBal fields (not just the hub's side) because the
+        // signed state is the authoritative balance split, and we need
+        // fundedBalA + fundedBalB == new totalBalance.
+        //
+        // The old code did a saturating subtraction on only the hub's
+        // fundedBal, which breaks when the hub earned funds off-chain:
+        // fundedBal tracks deposits, not earnings, so subtracting earned
+        // amounts underflows to 0 and the invariant breaks.
         if (msg.sender == from.participantA) {
             from.closeBalA = state.balA - amount;
             from.closeBalB = state.balB;
-            from.fundedBalA = from.fundedBalA > amount
-                ? from.fundedBalA - amount : 0;
+            from.fundedBalA = state.balA - amount;
+            from.fundedBalB = state.balB;
         } else {
             from.closeBalA = state.balA;
             from.closeBalB = state.balB - amount;
-            from.fundedBalB = from.fundedBalB > amount
-                ? from.fundedBalB - amount : 0;
+            from.fundedBalA = state.balA;
+            from.fundedBalB = state.balB - amount;
         }
 
         to.totalBalance = to.totalBalance + amount;
