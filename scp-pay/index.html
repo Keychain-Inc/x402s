@@ -10,6 +10,11 @@
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#f0f4fa;--card:#fff;--b5:#3b82f6;--b6:#2563eb;--b7:#1d4ed8;--b1:#dbeafe;--b0:#eff6ff;--t1:#0f172a;--t2:#475569;--t3:#94a3b8;--bd:#e2e8f0;--ok:#10b981;--er:#ef4444;--r:14px;--f:'Plus Jakarta Sans',system-ui,sans-serif;--m:'DM Mono',monospace}
 html,body{font-family:var(--f);background:var(--bg);color:var(--t1);-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;align-items:center;justify-content:center}
+html.iframe,html.iframe body{background:transparent;min-height:0}
+html.iframe .w{padding:0}
+html.iframe .c{box-shadow:none;border:1.5px solid var(--bd);border-radius:16px}
+html.iframe .c::before{display:none}
+html.iframe .ft{display:none}
 .w{width:100%;max-width:400px;padding:16px;animation:u .5s cubic-bezier(.16,1,.3,1) both}
 @keyframes u{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
 .c{background:var(--card);border-radius:20px;box-shadow:0 8px 32px rgba(0,0,0,.07);overflow:hidden;position:relative}
@@ -282,6 +287,7 @@ html,body{font-family:var(--f);background:var(--bg);color:var(--t1);-webkit-font
 // ======================================================================
 // SCP Agent — full protocol core
 // ======================================================================
+if(window!==window.parent)document.documentElement.classList.add("iframe");
 const DC="0x07ECA6701062Db12eDD04bEa391eD226C95aaD4b",Z32="0x"+"0".repeat(64),ZA="0x"+"0".repeat(40);
 const NW={sepolia:{cid:11155111,caip:"eip155:11155111",rpcs:["https://ethereum-sepolia-rpc.publicnode.com","https://rpc.ankr.com/eth_sepolia","https://eth-sepolia.public.blastapi.io","https://1rpc.io/sepolia","https://sepolia.drpc.org"]},"base-sepolia":{cid:84532,caip:"eip155:84532",rpcs:["https://base-sepolia-rpc.publicnode.com","https://sepolia.base.org","https://base-sepolia.public.blastapi.io","https://rpc.ankr.com/base_sepolia"]},"base":{cid:8453,caip:"eip155:8453",rpcs:["https://base-rpc.publicnode.com","https://mainnet.base.org","https://rpc.ankr.com/base","https://base.public.blastapi.io","https://1rpc.io/base"]},"mainnet":{cid:1,caip:"eip155:1",rpcs:["https://ethereum-rpc.publicnode.com","https://rpc.ankr.com/eth","https://eth.public.blastapi.io","https://1rpc.io/eth","https://cloudflare-eth.com"]}};
 const AZ={1:{usdc:"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"},8453:{usdc:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"},11155111:{usdc:"0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"},84532:{usdc:"0x036CbD53842c5426634e7929541eC2318f3dCF7e"}};
@@ -564,7 +570,7 @@ if(pp.get('url'))document.getElementById('iUrl').value=pp.get('url');
 window.addEventListener('message',e=>{if(e.data?.type==='x402:config'){if(e.data.url)document.getElementById('iUrl').value=e.data.url;}});
 
 // Boot
-console.log("[x402s] scp-pay v11 loaded");
+console.log("[x402s] scp-pay v12 loaded");
 loadSettings();
 if(!loadWallet())show('vWel');
 </script>

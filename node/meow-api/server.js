@@ -294,9 +294,11 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
     </div>
     <div class="actions">
       <button class="btn btn-go" id="plantBtn"><span class="ico">🌱</span> Copy Plant Link</button>
-      <a class="btn" id="scpLink" href="${baseUrl}/scpapp/" target="_blank" rel="noreferrer"><span class="ico">🔗</span> Open SCP App</a>
     </div>
-    <div class="msg" id="msg">Copy the plant link, pay it in the SCP app — a tree grows in your garden!</div>
+    <div id="payFrame" style="margin-top:12px;border-radius:16px;overflow:hidden;border:2px solid var(--bdr);background:var(--card);backdrop-filter:blur(14px)">
+      <iframe id="scpIframe" style="width:100%;border:none;min-height:520px;display:block;border-radius:14px" title="Pay with x402s"></iframe>
+    </div>
+    <div class="msg" id="msg">Pay directly above, or copy the plant link to pay from another device!</div>
   </div>
 </div>
 
@@ -306,8 +308,10 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
   document.getElementById("priceLabel").textContent=PW;
   var K="meow_garden_id",gid=localStorage.getItem(K);
   if(!gid){gid="g_"+Math.random().toString(36).slice(2,12);localStorage.setItem(K,gid)}
-  var $gid=document.getElementById("gardenId"),$c=document.getElementById("count"),$m=document.getElementById("msg"),$p=document.getElementById("plantBtn"),$sl=document.getElementById("scpLink"),$cat=document.getElementById("theCat"),$say=document.getElementById("catSay");
-  $gid.textContent=gid;if(BASE)$sl.href=BASE+"/scpapp/";
+  var $gid=document.getElementById("gardenId"),$c=document.getElementById("count"),$m=document.getElementById("msg"),$p=document.getElementById("plantBtn"),$cat=document.getElementById("theCat"),$say=document.getElementById("catSay");
+  $gid.textContent=gid;
+  var scpBase=(BASE||window.location.origin)+"/scpapp/";
+  function updateIframe(){var u=plantUrl();document.getElementById("scpIframe").src=scpBase+"?url="+encodeURIComponent(u)}
   var knownTrees=0,treeSlots=[];
   function plantUrl(){return(BASE||window.location.origin)+"/meow/plant?garden="+encodeURIComponent(gid)}
   function setM(t,ok){$m.textContent=t;$m.classList.toggle("ok",!!ok)}
@@ -392,6 +396,7 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
   });
 
   initGarden();
+  updateIframe();
   setInterval(pollGarden,3000);
 })();
 </script>
