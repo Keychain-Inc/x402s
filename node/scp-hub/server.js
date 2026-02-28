@@ -79,7 +79,7 @@ const CHANNEL_ABI = [
   "function cooperativeClose(tuple(bytes32 channelId, uint64 stateNonce, uint256 balA, uint256 balB, bytes32 locksRoot, uint64 stateExpiry, bytes32 contextHash) st, bytes sigA, bytes sigB) external",
   "function rebalance(tuple(bytes32 channelId, uint256 stateNonce, uint256 balA, uint256 balB, bytes32 locksRoot, uint256 stateExpiry, bytes32 contextHash) state, bytes32 toChannelId, uint256 amount, bytes sigCounterparty) external",
   "function balance(bytes32 channelId) external view returns (tuple(uint256 totalBalance, uint256 balA, uint256 balB, uint64 latestNonce, bool isClosing))",
-  "function getChannel(bytes32 channelId) external view returns (tuple(address participantA, address participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry, uint256 totalBalance, bool isClosing, uint64 closeDeadline, uint64 latestNonce, uint8 hubFlags))",
+  "function getChannel(bytes32 channelId) external view returns (tuple(address participantA, address participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry, uint256 totalBalance, bool isClosing, uint64 closeDeadline, uint64 latestNonce))",
   "event ChannelOpened(bytes32 indexed channelId, address indexed participantA, address indexed participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry)",
   "event Deposited(bytes32 indexed channelId, address indexed sender, uint256 amount, uint256 newTotalBalance)",
   "event Rebalanced(bytes32 indexed fromChannelId, bytes32 indexed toChannelId, uint256 amount, uint256 fromNewTotal, uint256 toNewTotal)"
