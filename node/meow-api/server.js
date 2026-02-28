@@ -296,10 +296,7 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
     </div>
     <div class="actions">
       <button class="btn btn-go" id="plantBtn"><span class="ico">🌱</span> Copy Plant Link</button>
-      <button class="btn" id="payBtn" onclick="togglePay()"><span class="ico">💳</span> Pay</button>
-    </div>
-    <div id="payWrap" style="display:none;margin-top:12px">
-      <iframe id="scpIframe" style="width:100%;border:none;min-height:520px;display:block;border-radius:16px" title="Pay with x402s"></iframe>
+      <button class="btn" id="payBtn" onclick="openPay()"><span class="ico">💳</span> Pay</button>
     </div>
     <div class="msg" id="msg">Copy the plant link to pay from another device, or pay directly here!</div>
   </div>
@@ -313,8 +310,7 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
   if(!gid){gid="g_"+Math.random().toString(36).slice(2,12);localStorage.setItem(K,gid)}
   var $gid=document.getElementById("gardenId"),$c=document.getElementById("count"),$m=document.getElementById("msg"),$p=document.getElementById("plantBtn"),$cat=document.getElementById("theCat"),$say=document.getElementById("catSay");
   $gid.textContent=gid;
-  var payOpen=false;
-  function togglePay(){var w=document.getElementById("payWrap"),f=document.getElementById("scpIframe"),b=document.getElementById("payBtn");if(payOpen){w.style.display="none";b.querySelector(".ico").textContent="💳";payOpen=false;return}var scpBase=SCPPAY||(BASE||window.location.origin)+"/scpapp/";f.src=scpBase+"?url="+encodeURIComponent(plantUrl());w.style.display="block";b.querySelector(".ico").textContent="✕";payOpen=true}
+  function openPay(){var scpBase=SCPPAY||(BASE||window.location.origin)+"/scpapp/";window.open(scpBase+"?url="+encodeURIComponent(plantUrl()),"_blank")}
   var knownTrees=0,treeSlots=[];
   function plantUrl(){return(BASE||window.location.origin)+"/meow/plant?garden="+encodeURIComponent(gid)}
   function setM(t,ok){$m.textContent=t;$m.classList.toggle("ok",!!ok)}
