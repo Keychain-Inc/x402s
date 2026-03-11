@@ -18,13 +18,13 @@ const RPC_PRESETS = {
 };
 
 const CHANNEL_ABI = [
-  "function openChannel(address participantB, address asset, uint256 amount, uint64 challengePeriodSec, uint64 channelExpiry, bytes32 salt) external payable returns (bytes32 channelId)",
+  "function openChannel(address participantB, address asset, uint256 amount, uint64 challengePeriodSec, uint64 channelExpiry, bytes32 salt, uint8 hubFlags) external payable returns (bytes32 channelId)",
   "function deposit(bytes32 channelId, uint256 amount) external payable",
   "function cooperativeClose(tuple(bytes32 channelId, uint256 stateNonce, uint256 balA, uint256 balB, bytes32 locksRoot, uint256 stateExpiry, bytes32 contextHash) st, bytes sigA, bytes sigB) external",
   "function startClose(tuple(bytes32 channelId, uint256 stateNonce, uint256 balA, uint256 balB, bytes32 locksRoot, uint256 stateExpiry, bytes32 contextHash) st, bytes sigFromCounterparty) external",
   "function rebalance(tuple(bytes32 channelId, uint256 stateNonce, uint256 balA, uint256 balB, bytes32 locksRoot, uint256 stateExpiry, bytes32 contextHash) state, bytes32 toChannelId, uint256 amount, bytes sigCounterparty) external",
   "function balance(bytes32 channelId) external view returns (tuple(uint256 totalBalance, uint256 balA, uint256 balB, uint64 latestNonce, bool isClosing))",
-  "function getChannel(bytes32 channelId) external view returns (tuple(address participantA, address participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry, uint256 totalBalance, bool isClosing, uint64 closeDeadline, uint64 latestNonce))",
+  "function getChannel(bytes32 channelId) external view returns (tuple(address participantA, address participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry, uint256 totalBalance, bool isClosing, uint64 closeDeadline, uint64 latestNonce, uint8 hubFlags))",
   "event ChannelOpened(bytes32 indexed channelId, address indexed participantA, address indexed participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry)",
   "event Deposited(bytes32 indexed channelId, address indexed sender, uint256 amount, uint256 newTotalBalance)",
   "event Rebalanced(bytes32 indexed fromChannelId, bytes32 indexed toChannelId, uint256 amount, uint256 fromNewTotal, uint256 toNewTotal)",
@@ -317,6 +317,82 @@ class ScpAgentClient {
     saveJson(this.stateFile, this.state);
   }
 
+  existingHubChannel(hubEndpoint) {
+    const channelKey = `hub:${hubEndpoint}`;
+    const ch = this.state.channels[channelKey] || null;
+    if (ch && !ch.endpoint) {
+      ch.endpoint = hubEndpoint;
+      this.persist();
+    }
+    return ch;
+  }
+
+  mergeWatchState(channel) {
+    if (!channel || !channel.channelId) return channel;
+    const watchEntry = (((this.state || {}).watch || {}).byChannelId || {})[channel.channelId];
+    if (!watchEntry || !watchEntry.state) return channel;
+    return {
+      ...channel,
+      nonce: Number(watchEntry.state.stateNonce),
+      balA: String(watchEntry.state.balA),
+      balB: String(watchEntry.state.balB)
+    };
+  }
+
+  findUniqueChannelForCounterparty(counterparty, options = {}) {
+    const participantB = String(counterparty || "").trim().toLowerCase();
+    if (!participantB) return null;
+
+    const asset = String(options.asset || "").trim().toLowerCase();
+    const expectedNetwork = normalizeNetworkLabel(options.network);
+    const uniqueByChannelId = new Map();
+
+    for (const channel of Object.values(this.state.channels)) {
+      if (!channel || !channel.channelId) continue;
+      if (String(channel.status || "").toLowerCase() === "closed") continue;
+      if (String(channel.participantB || "").trim().toLowerCase() !== participantB) continue;
+      if (asset && String(channel.asset || "").trim().toLowerCase() !== asset) continue;
+
+      const storedNetwork = normalizeNetworkLabel(channel.network);
+      if (expectedNetwork && storedNetwork && storedNetwork !== expectedNetwork) continue;
+
+      if (!uniqueByChannelId.has(channel.channelId)) {
+        uniqueByChannelId.set(channel.channelId, this.mergeWatchState(channel));
+      }
+    }
+
+    if (uniqueByChannelId.size !== 1) return null;
+    return [...uniqueByChannelId.values()][0];
+  }
+
+  aliasHubChannel(hubEndpoint, channel) {
+    if (!channel) return null;
+    const channelKey = `hub:${hubEndpoint}`;
+    const next = {
+      ...this.mergeWatchState(channel),
+      endpoint: hubEndpoint
+    };
+    const prev = this.state.channels[channelKey];
+    this.state.channels[channelKey] = next;
+    if (!prev || JSON.stringify(prev) !== JSON.stringify(next)) {
+      this.persist();
+    }
+    return this.state.channels[channelKey];
+  }
+
+  async recoverHubChannel(hubEndpoint, options = {}) {
+    const existing = this.existingHubChannel(hubEndpoint);
+    if (existing) return existing;
+
+    const hubInfo = options.hubInfo || await this.queryHubInfo(hubEndpoint).catch(() => null);
+    const hubAddress = String((hubInfo || {}).address || "").trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(hubAddress)) return null;
+
+    const recovered = this.findUniqueChannelForCounterparty(hubAddress, options);
+    if (!recovered) return null;
+    return this.aliasHubChannel(hubEndpoint, recovered);
+  }
+
   channelForKey(channelKey) {
     if (!this.state.channels[channelKey]) {
       if (this.devMode) {
@@ -337,6 +413,9 @@ class ScpAgentClient {
   }
 
   channelForHub(hubEndpoint) {
+    const existing = this.existingHubChannel(hubEndpoint);
+    if (existing) return existing;
+
     const ch = this.channelForKey(`hub:${hubEndpoint}`);
     if (ch && !ch.endpoint) { ch.endpoint = hubEndpoint; this.persist(); }
     return ch;
@@ -428,21 +507,22 @@ class ScpAgentClient {
     ch.balB = String(state.balB);
   }
 
-  async discoverOffers(resourceUrl) {
+  async discoverOffers(resourceUrl, method = "GET") {
     const parseOffers = (res) => (res.body.accepts || []).filter((offer) => {
       const offerNetwork = normalizeNetworkLabel(offer.network);
-      if (!offerNetwork || !this.networkAllowlist.includes(offerNetwork)) return false;
-      if (this.assetAllowlist.length > 0 && !this.assetAllowlist.includes(offer.asset.toLowerCase())) {
-        return false;
-      }
-      return offer.scheme === "statechannel-hub-v1" || offer.scheme === "statechannel-direct-v1";
+      if (!offerNetwork || !this.networkAllowlist.includes(offerNetwork)) { console.log("rejected net:", offer_network); return false; }
+      if (this.assetAllowlist.length > 0 && !this.assetAllowlist.includes(offer.asset.toLowerCase())) { console.log("rejected asset:", offer.asset); return false; }
+      const schemeOk = offer.scheme === "statechannel-hub-v1" || offer.scheme === "statechannel-direct-v1";
+      if (!schemeOk) console.log("rejected scheme:", offer.scheme);
+      return schemeOk;
     });
 
-    const directRes = await this.http.request("GET", resourceUrl);
+    const directRes = await this.http.request(method, resourceUrl);
     if (directRes.statusCode === 402 || directRes.statusCode === 200) {
       if (directRes.body && Array.isArray(directRes.body.accepts)) {
         const directOffers = parseOffers(directRes);
         if (directOffers.length > 0) return directOffers;
+      console.log("directRes body", directRes.body);
       } else if (directRes.statusCode === 402) {
         throw new Error("payee returned 402 without accepts[] offers");
       }
@@ -553,10 +633,13 @@ class ScpAgentClient {
       return { offer, affordable: false, reason: "missing hubEndpoint" };
     }
 
-    const channelKey = `hub:${hubEndpoint}`;
-    const ch = this.state.channels[channelKey] || null;
-    const currentBal = ch ? BigInt(ch.balA || "0") : 0n;
     const hubInfo = await this.queryHubInfo(hubEndpoint).catch(() => null);
+    const ch = await this.recoverHubChannel(hubEndpoint, {
+      hubInfo,
+      asset: offer.asset,
+      network: offer.network
+    });
+    const currentBal = ch ? BigInt(ch.balA || "0") : 0n;
     const plan = this.computeHubFundingPlan(offer, options, hubInfo);
     const additionalFunding = plan.targetBalance > currentBal ? plan.targetBalance - currentBal : 0n;
     if (additionalFunding === 0n) {
@@ -732,8 +815,18 @@ class ScpAgentClient {
     return maxAmount;
   }
 
-  ensureHubChannel(hubEndpoint, amount) {
-    const ch = this.channelForHub(hubEndpoint);
+  async ensureHubChannel(hubEndpoint, amount, options = {}) {
+    let ch = this.existingHubChannel(hubEndpoint);
+    const hubInfo = ch ? null : await this.queryHubInfo(hubEndpoint).catch(() => null);
+    if (!ch) {
+      ch = await this.recoverHubChannel(hubEndpoint, {
+        ...options,
+        hubInfo
+      });
+    }
+    if (!ch && this.devMode) {
+      ch = this.channelForHub(hubEndpoint);
+    }
     if (ch) {
       // SECURITY: refuse to pay via hub with a virtual channel — the hub will
       // reject it anyway after Finding #1 fix, but fail early with a clear error.
@@ -745,10 +838,8 @@ class ScpAgentClient {
       }
       return ch;
     }
-    return this.queryHubInfo(hubEndpoint).catch(() => null).then((hubInfo) => {
-      if (hubInfo) throw new Error(this.formatSetupHint(hubInfo, amount));
-      throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run scp:channel:open -- <hubAddress> <deposit>`);
-    });
+    if (hubInfo) throw new Error(this.formatSetupHint(hubInfo, amount));
+    throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run scp:channel:open -- <hubAddress> <deposit>`);
   }
 
   async quoteAndIssueHubTicket(hubEndpoint, contextHash, quoteReq) {
@@ -864,7 +955,10 @@ class ScpAgentClient {
       fallback: this.maxFeeDefault
     });
     this.enforceMaxAmount(amount, offer, options);
-    await this.ensureHubChannel(hubEndpoint, amount);
+    await this.ensureHubChannel(hubEndpoint, amount, {
+      asset: offer.asset,
+      network: offer.network
+    });
 
     const contextHash = this.buildContextHash({
       payee: ext.payeeAddress || offer.payTo,
@@ -1024,7 +1118,10 @@ class ScpAgentClient {
       fallback: this.maxFeeDefault
     });
     this.enforceMaxAmount(amount, capOffer, options);
-    await this.ensureHubChannel(hubEndpoint, amount);
+    await this.ensureHubChannel(hubEndpoint, amount, {
+      asset,
+      network: options.network || this.networkAllowlist[0]
+    });
 
     const contextHash = this.buildContextHash({
       payee: payeeAddress,
@@ -1071,7 +1168,7 @@ class ScpAgentClient {
   }
 
   async payResource(resourceUrl, options = {}) {
-    const offers = await this.discoverOffers(resourceUrl);
+    const offers = await this.discoverOffers(resourceUrl, options.method || "GET");
     if (offers.length === 0) {
       throw new Error("No compatible payment offers from payee.");
     }
@@ -1115,6 +1212,10 @@ class ScpAgentClient {
     const challengePeriod = Number(options.challengePeriodSec || 86400);
     const channelExpiry = Number(options.channelExpiry || now() + 86400 * 30);
     const salt = options.salt || ethers.utils.formatBytes32String(`ag-${now()}-${participantB.slice(2, 8)}`);
+    const channelNetwork = normalizeNetworkLabel(options.network);
+    const hubFlags = Number.isInteger(options.hubFlags)
+      ? options.hubFlags
+      : (options.hubEndpoint ? 2 : 0);
 
     const baseTxOpts = asset === ethers.constants.AddressZero
       ? { value: amount }
@@ -1122,36 +1223,51 @@ class ScpAgentClient {
     let gasLimit;
     try {
       const estimated = await contract.estimateGas.openChannel(
-        ethers.utils.getAddress(participantB), asset, amount, challengePeriod, channelExpiry, salt, baseTxOpts
+        ethers.utils.getAddress(participantB), asset, amount, challengePeriod, channelExpiry, salt, hubFlags, baseTxOpts
       );
       gasLimit = estimated.mul(130).div(100);
     } catch (_e) {
-      gasLimit = ethers.BigNumber.from("700000");
+      console.error("ESTIMATE GAS FAILED:", _e); gasLimit = ethers.BigNumber.from("700000");
     }
     const txOpts = { ...baseTxOpts, gasLimit };
     const tx = await contract.openChannel(
       ethers.utils.getAddress(participantB), asset, amount,
-      challengePeriod, channelExpiry, salt, txOpts
+      challengePeriod, channelExpiry, salt, hubFlags, txOpts
     );
     const rc = await tx.wait(1);
     const ev = rc.events.find(e => e.event === "ChannelOpened");
     const channelId = ev.args.channelId;
 
     // Store in agent state
-    const channelKey = `onchain:${channelId}`;
-    this.state.channels[channelKey] = {
+    const baseChannel = {
       channelId,
       participantB: ethers.utils.getAddress(participantB),
       asset,
+      hubFlags,
       nonce: 0,
       balA: amount.toString(),
       balB: "0",
       totalDeposit: amount.toString(),
       challengePeriodSec: challengePeriod,
       channelExpiry,
+      ...(channelNetwork ? { network: channelNetwork } : {}),
       contractAddress,
       txHash: tx.hash
     };
+    const channelKey = `onchain:${channelId}`;
+    this.state.channels[channelKey] = { ...baseChannel };
+    if (options.hubEndpoint) {
+      this.state.channels[`hub:${options.hubEndpoint}`] = {
+        ...baseChannel,
+        endpoint: options.hubEndpoint
+      };
+    }
+    if (options.directPayee) {
+      this.state.channels[`direct:${String(options.directPayee).toLowerCase()}`] = {
+        ...baseChannel,
+        endpoint: options.endpoint || ""
+      };
+    }
     this.persist();
 
     return {
@@ -1159,6 +1275,7 @@ class ScpAgentClient {
       participantA: this.wallet.address,
       participantB: ethers.utils.getAddress(participantB),
       asset,
+      hubFlags,
       amount: amount.toString(),
       challengePeriodSec: challengePeriod,
       txHash: tx.hash

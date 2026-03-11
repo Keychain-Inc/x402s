@@ -1,6 +1,13 @@
 /* eslint-disable no-console */
 const { ScpAgentClient } = require("./agent-client");
-const { resolveNetwork, resolveAsset, resolveContract, parseAmount, formatAmount } = require("../scp-common/networks");
+const {
+  resolveNetwork,
+  resolveAsset,
+  resolveContract,
+  resolveHubEndpointForNetwork,
+  parseAmount,
+  formatAmount
+} = require("../scp-common/networks");
 
 const cmd = process.argv[2];
 const args = process.argv.slice(3);
@@ -26,6 +33,16 @@ Assets:   eth, usdc, usdt`;
 if (!cmd || cmd === "help") {
   console.log(USAGE);
   process.exit(0);
+}
+
+async function matchingHubEndpoint(agent, participantB, candidateEndpoint) {
+  const endpoint = String(candidateEndpoint || "").trim();
+  if (!endpoint) return null;
+
+  const hubInfo = await agent.queryHubInfo(endpoint).catch(() => null);
+  const hubAddress = String((hubInfo || {}).address || "").trim().toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(hubAddress)) return null;
+  return hubAddress === String(participantB || "").trim().toLowerCase() ? endpoint : null;
 }
 
 async function main() {
@@ -64,6 +81,7 @@ async function main() {
         assetAddr = arg2;
         rawAmount = arg3;
         const contract = process.env.CONTRACT_ADDRESS;
+        const hubEndpoint = await matchingHubEndpoint(agent, participantB, process.env.HUB_URL);
         if (!contract) {
           console.error("CONTRACT_ADDRESS env var required for raw mode.");
           process.exit(1);
@@ -80,7 +98,8 @@ async function main() {
           rpcUrl,
           contractAddress: contract,
           asset: assetAddr,
-          amount: rawAmount
+          amount: rawAmount,
+          ...(hubEndpoint ? { hubEndpoint } : {})
         });
         console.log("Channel opened!");
         console.log(`  channelId: ${result.channelId}`);
@@ -95,6 +114,8 @@ async function main() {
       const contract = resolveContract(network.chainId);
       rpcUrl = process.env.RPC_URL || network.rpc;
       rawAmount = parseAmount(arg3, asset.decimals);
+      const candidateHubEndpoint = process.env.HUB_URL || resolveHubEndpointForNetwork(network.chainId);
+      const hubEndpoint = await matchingHubEndpoint(agent, participantB, candidateHubEndpoint);
 
       if (!contract) {
         console.error(`No contract address for ${network.name}. Set CONTRACT_ADDRESS env var.`);
@@ -113,7 +134,9 @@ async function main() {
         rpcUrl,
         contractAddress: contract,
         asset: asset.address,
-        amount: rawAmount
+        amount: rawAmount,
+        network: network.chainId,
+        ...(hubEndpoint ? { hubEndpoint } : {})
       });
       console.log("Channel opened!");
       console.log(`  channelId: ${result.channelId}`);

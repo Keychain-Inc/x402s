@@ -253,6 +253,12 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
 .cft{position:fixed;pointer-events:none;z-index:21;width:8px;height:8px;border-radius:2px;animation:cf ease-out forwards}
 @keyframes cf{0%{opacity:1;transform:translate(0,0) rotate(0)}100%{opacity:0;transform:translate(var(--cx),var(--cy)) rotate(720deg)}}
 
+/* pay overlay */
+.pay-overlay{display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.45);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);align-items:center;justify-content:center;animation:fi .25s ease}
+.pay-overlay.show{display:flex}
+.pay-frame{width:100%;max-width:430px;height:min(680px,90vh);border:none;border-radius:22px;box-shadow:0 20px 60px rgba(0,0,0,.25);background:#fff}
+.pay-close{position:fixed;top:16px;right:20px;z-index:101;width:36px;height:36px;border-radius:50%;border:none;background:rgba(255,255,255,.9);color:#333;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.15);transition:transform .15s}
+.pay-close:hover{transform:scale(1.1)}
 @media(max-width:680px){.stats{grid-template-columns:1fr}.actions{flex-direction:column}.actions .btn{width:100%;justify-content:center}.hero{justify-content:center;text-align:center}}
 </style>
 </head>
@@ -297,9 +303,15 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
     <div class="actions">
       <button class="btn btn-go" id="plantBtn"><span class="ico">🌱</span> Copy Plant Link</button>
       <button class="btn" id="payBtn" onclick="openPay()"><span class="ico">💳</span> Pay</button>
+      <button class="btn" id="netBtn" onclick="toggleNet()" style="font-size:12px;padding:8px 14px"><span class="ico" id="netIco">🟣</span> <span id="netLabel">Sepolia</span></button>
     </div>
     <div class="msg" id="msg">Copy the plant link to pay from another device, or pay directly here!</div>
   </div>
+</div>
+
+<div class="pay-overlay" id="payOverlay">
+  <button class="pay-close" id="payClose" onclick="closePay()">✕</button>
+  <iframe class="pay-frame" id="payFrame" allow="clipboard-write"></iframe>
 </div>
 
 <script>
@@ -310,9 +322,18 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
   if(!gid){gid="g_"+Math.random().toString(36).slice(2,12);localStorage.setItem(K,gid)}
   var $gid=document.getElementById("gardenId"),$c=document.getElementById("count"),$m=document.getElementById("msg"),$p=document.getElementById("plantBtn"),$cat=document.getElementById("theCat"),$say=document.getElementById("catSay");
   $gid.textContent=gid;
-  function openPay(){var scpBase=SCPPAY||(BASE||window.location.origin)+"/scpapp/";window.open(scpBase+"?url="+encodeURIComponent(plantUrl()),"_blank")}
+  var $payOv=document.getElementById("payOverlay"),$payFr=document.getElementById("payFrame");
+  window.openPay=function(){var scpBase=(BASE||window.location.origin)+"/scppay/";$payFr.src=scpBase+"?url="+encodeURIComponent(plantUrl());$payOv.classList.add("show")}
+  window.closePay=function(){$payOv.classList.remove("show");$payFr.src=""}
+  $payOv.addEventListener("click",function(e){if(e.target===$payOv)closePay()})
+  window.addEventListener("message",function(e){if(e.data&&e.data.type==="x402:payment:success"){closePay();catSay("Tree planted!");petals(20);pollGarden()}})
   var knownTrees=0,treeSlots=[];
-  function plantUrl(){return(BASE||window.location.origin)+"/meow/plant?garden="+encodeURIComponent(gid)}
+  var NET_KEY="meow_net",curNet=localStorage.getItem(NET_KEY)||"sepolia";
+  var NETS={sepolia:{label:"Sepolia",ico:"🟣",path:"/meow/"},base:{label:"Base",ico:"🔵",path:"/meow-base/"}};
+  function updateNetUI(){var n=NETS[curNet]||NETS.sepolia;document.getElementById("netLabel").textContent=n.label;document.getElementById("netIco").textContent=n.ico}
+  window.toggleNet=function(){curNet=curNet==="sepolia"?"base":"sepolia";localStorage.setItem(NET_KEY,curNet);updateNetUI();catSay("Switched to "+NETS[curNet].label+"!")}
+  updateNetUI();
+  function plantUrl(){var n=NETS[curNet]||NETS.sepolia;return(BASE||window.location.origin)+n.path+"plant?garden="+encodeURIComponent(gid)}
   function setM(t,ok){$m.textContent=t;$m.classList.toggle("ok",!!ok)}
 
   var FL=["🌸","🌼","🍀","✨","🌷","💐","🪻","🏵️"];
@@ -344,7 +365,7 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
 
   function pollGarden(){
     var xhr=new XMLHttpRequest();
-    xhr.open("GET",BASE+"/meow/garden?garden="+encodeURIComponent(gid));
+    var np=NETS[curNet]||NETS.sepolia;xhr.open("GET",(BASE||window.location.origin)+np.path+"garden?garden="+encodeURIComponent(gid));
     xhr.setRequestHeader("Accept","application/json");
     xhr.onload=function(){
       if(xhr.status!==200)return;
@@ -367,7 +388,7 @@ h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:clamp(30px,7vw,48p
 
   function initGarden(){
     var xhr=new XMLHttpRequest();
-    xhr.open("GET",BASE+"/meow/garden?garden="+encodeURIComponent(gid));
+    var np=NETS[curNet]||NETS.sepolia;xhr.open("GET",(BASE||window.location.origin)+np.path+"garden?garden="+encodeURIComponent(gid));
     xhr.setRequestHeader("Accept","application/json");
     xhr.onload=function(){
       if(xhr.status!==200)return;
@@ -463,6 +484,8 @@ function issueAccessGrant(res, pathname, ctx) {
 }
 
 function resolveResourceUrl(req, pathname = "/meow") {
+  const prefix = req.headers["x-forwarded-prefix"] || "";
+  if (prefix) pathname = pathname.replace(/^\/meow/, prefix);
   if (PUBLIC_BASE_URL) {
     return `${PUBLIC_BASE_URL.replace(/\/+$/, "")}${pathname}`;
   }

@@ -363,6 +363,13 @@ class Storage {
     return this._backend.set("channels", channelId, value);
   }
 
+  get(collection, key) {
+    return this._backend.get(collection, key);
+  }
+  set(collection, key, value) {
+    return this._backend.set(collection, key, value);
+  }
+
   async tx(mutator) {
     if (typeof this._backend.tx === "function") {
       return this._backend.tx(mutator);

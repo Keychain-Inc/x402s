@@ -73,6 +73,10 @@ const RATE_LIMIT_ISSUE = Math.max(0, Number(process.env.RATE_LIMIT_ISSUE || 240)
 const RATE_LIMIT_REFUNDS = Math.max(0, Number(process.env.RATE_LIMIT_REFUNDS || 60));
 const QUOTE_SWEEP_INTERVAL_SEC = Math.max(1, Number(process.env.QUOTE_SWEEP_INTERVAL_SEC || 30));
 const SETTLEMENT_MODE = String(process.env.SETTLEMENT_MODE || "cooperative_close").toLowerCase();
+const HANDLE_ENABLED = process.env.HANDLE_ENABLED === "1";
+const HANDLE_DOMAIN = process.env.HANDLE_DOMAIN || "";
+const HANDLE_PRICE = process.env.HANDLE_PRICE || "0";
+const HANDLE_ASSET = process.env.HANDLE_ASSET || "0x0000000000000000000000000000000000000000";
 const CHANNEL_ABI = [
   "function openChannel(address hub, address asset, uint256 amount, uint64 challengePeriodSec, uint64 channelExpiry, bytes32 salt) external payable returns (bytes32 channelId)",
   "function deposit(bytes32 channelId, uint256 amount) external payable",
@@ -142,7 +146,8 @@ function setCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Headers", CORS_HEADERS);
   res.setHeader("Access-Control-Expose-Headers", CORS_EXPOSE_HEADERS);
   res.setHeader("Access-Control-Max-Age", "86400");
-  res.setHeader("Vary", "Origin");
+  res.setHeader("Vary", "Origin, Payment-Signature");
+  res.setHeader("Cache-Control", "no-store");
 }
 
 function sendJson(res, code, payload) {
@@ -315,7 +320,10 @@ function requireAdminAuth(req, res) {
   const authz = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
   const bearer = authz.toLowerCase().startsWith("bearer ") ? authz.slice(7).trim() : "";
   const token = hdrToken || bearer;
-  if (!token || token !== HUB_ADMIN_TOKEN) {
+  const tokenBuf = Buffer.from(token || "");
+  const expectedBuf = Buffer.from(HUB_ADMIN_TOKEN);
+  if (!token || tokenBuf.length !== expectedBuf.length ||
+      !crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
     sendJson(res, 401, makeError("SCP_012_UNAUTHORIZED", "admin auth required"));
     return false;
   }
@@ -487,7 +495,10 @@ async function handleRequest(req, res) {
         );
       }
 
-      const { fee, breakdown } = calcFee(body.amount);
+      const isHandleOp = typeof body.invoiceId === "string" && body.invoiceId.startsWith("inv_hr_");
+      const { fee: rawFee, breakdown } = calcFee(body.amount);
+      const fee = isHandleOp ? 0n : rawFee;
+      if (isHandleOp) { breakdown.base = "0"; breakdown.variable = "0"; breakdown.gasSurcharge = "0"; }
       const maxFee = BigInt(body.maxFee);
       if (fee > maxFee) {
         return sendJson(res, 400, makeError("SCP_003_FEE_EXCEEDS_MAX", "fee > maxFee"));
@@ -531,12 +542,29 @@ async function handleRequest(req, res) {
         );
       }
 
+      // Look up payer credits (earned from incoming handle payments)
+      let payerCredit = "0";
+      const existingCh = await store.getChannel(body.channelId);
+      if (existingCh && existingCh.participantA) {
+        const payerKey = existingCh.participantA.toLowerCase();
+        const credits = await store.tx((s) => {
+          return s.payerCredits?.[payerKey] || "0";
+        });
+        if (BigInt(credits) > 0n) {
+          // Credit is capped at hub's balB in this channel (hub can only give back what it has)
+          const hubBalB = existingCh.latestState ? BigInt(existingCh.latestState.balB) : 0n;
+          const available = BigInt(credits) > hubBalB ? hubBalB : BigInt(credits);
+          payerCredit = available.toString();
+        }
+      }
+
       await store.tx((s) => {
         s.quotes[`${body.invoiceId}:${body.paymentId}`] = {
           quote,
           channelId: body.channelId,
           contextHash: body.contextHash || ZERO32,
-          createdAt: now()
+          createdAt: now(),
+          payerCredit
         };
         s.payments[body.paymentId] = {
           paymentId: body.paymentId,
@@ -544,11 +572,13 @@ async function handleRequest(req, res) {
         };
       });
 
-      return sendJson(res, 200, quote);
+      return sendJson(res, 200, { ...quote, payerCredit });
     }
 
     if (req.method === "POST" && pathname === "/v1/tickets/issue") {
       const body = await parseBody(req);
+      // Strip payerCredit from submitted quote (added by hub in quote response, not part of schema)
+      if (body.quote && body.quote.payerCredit !== undefined) delete body.quote.payerCredit;
       if (!validate.issueRequest(body)) {
         return sendJson(
           res,
@@ -586,6 +616,9 @@ async function handleRequest(req, res) {
       }
 
       const existingChannel = await store.getChannel(body.channelState.channelId);
+      if (existingChannel && existingChannel.status === "closed") {
+        return sendJson(res, 409, makeError("SCP_007_CHANNEL_NOT_FOUND", "channel is closed"));
+      }
       let stateBalA;
       let stateBalB;
       let stateTotal;
@@ -606,6 +639,27 @@ async function handleRequest(req, res) {
         if (String(existingChannel.participantA || "").toLowerCase() !== recoveredA.toLowerCase()) {
           return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "participantA mismatch"));
         }
+        // Re-validate on-chain liveness for continuation issues
+        let onChainData = null;
+        const cHubSigner = getHubSigner();
+        if (cHubSigner && CONTRACT_ADDRESS) {
+          try {
+            const contract = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, cHubSigner);
+            onChainData = await contract.getChannel(body.channelState.channelId);
+            if (onChainData.isClosing) {
+              return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "channel is closing on-chain"));
+            }
+            const chainExpiry = Number(onChainData.channelExpiry);
+            if (chainExpiry > 0 && chainExpiry <= now()) {
+              return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "channel expired on-chain"));
+            }
+          } catch (e) {
+            // H2: fail-closed — do not issue tickets when liveness cannot be verified
+            console.warn("[issue] on-chain liveness check failed (fail-closed):", e.message);
+            return sendJson(res, 503, makeError("SCP_010_SETTLEMENT_UNAVAILABLE",
+              "on-chain liveness check failed, retry later: " + (e.message || "unknown")));
+          }
+        }
         let prevBalA;
         let prevBalB;
         try {
@@ -614,13 +668,45 @@ async function handleRequest(req, res) {
         } catch (e) {
           return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", e.message));
         }
-        const prevTotal = prevBalA + prevBalB;
+        let prevTotal = prevBalA + prevBalB;
+        // Reconcile on-chain deposits: if totalBalance increased, assign drift to payer (balA)
         if (stateTotal !== prevTotal) {
-          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "channel balance invariant violated"));
+          if (!onChainData && cHubSigner && CONTRACT_ADDRESS) {
+            try {
+              const contract = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, cHubSigner);
+              onChainData = await contract.getChannel(body.channelState.channelId);
+            } catch (e) {
+              console.warn("[issue] on-chain reconciliation failed:", e.message);
+            }
+          }
+          if (onChainData) {
+            const onChainTotal = BigInt(onChainData.totalBalance.toString());
+            if (onChainTotal > prevTotal && stateTotal === onChainTotal) {
+              const drift = onChainTotal - prevTotal;
+              console.log("[issue] deposit reconciled: drift=" + drift + " onChain=" + onChainTotal + " prev=" + prevTotal);
+              prevBalA = prevBalA + drift;
+              prevTotal = onChainTotal;
+            }
+          }
+          if (stateTotal !== prevTotal) {
+            return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "channel balance invariant violated"));
+          }
         }
-        if (prevBalA - stateBalA !== quoteDebit || stateBalB - prevBalB !== quoteDebit) {
+        // Allow payer credits (rebates from incoming handle payments) to offset the debit.
+        // With credit C: balA decreases by (totalDebit - C), balB increases by (totalDebit - C).
+        const credit = BigInt(stored.payerCredit || "0");
+        const netDebit = quoteDebit > credit ? quoteDebit - credit : 0n;
+        let appliedCredit = quoteDebit > credit ? credit : quoteDebit;
+        const deltaA = prevBalA - stateBalA;
+        const deltaB = stateBalB - prevBalB;
+        // Accept either: full debit (no credit applied) or net debit (credit applied)
+        const fullDebitOk = deltaA === quoteDebit && deltaB === quoteDebit;
+        const creditDebitOk = credit > 0n && deltaA === netDebit && deltaB === netDebit;
+        if (!fullDebitOk && !creditDebitOk) {
+          console.log("[issue] delta mismatch: deltaA=" + deltaA + " deltaB=" + deltaB + " quoteDebit=" + quoteDebit + " credit=" + credit + " netDebit=" + netDebit);
           return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "state delta must equal quote totalDebit"));
         }
+        if (fullDebitOk) appliedCredit = 0n; // Payer didn't apply credit — don't consume it
       } else {
         // SECURITY: First-seen channel — verify on-chain before issuing any ticket.
         // Without this, an attacker can submit arbitrary channelIds with fabricated
@@ -659,6 +745,15 @@ async function handleRequest(req, res) {
         if (recoveredA.toLowerCase() !== expectedPayer) {
           return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION",
             "sigA must recover to the non-hub channel participant"));
+        }
+        // Verify channel asset matches quoted asset
+        const onChainAsset = String(onChainData.asset || ethers.constants.AddressZero).toLowerCase();
+        const quotedAsset = String(quote.ticketDraft?.asset || ethers.constants.AddressZero).toLowerCase();
+        // Normalize: zero address and "eth" both mean native ETH
+        const normAsset = (a) => (a === "eth" || a === ethers.constants.AddressZero.toLowerCase()) ? ethers.constants.AddressZero.toLowerCase() : a;
+        if (normAsset(onChainAsset) !== normAsset(quotedAsset)) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION",
+            `channel asset (${onChainAsset}) does not match quoted asset (${quotedAsset})`));
         }
         // Verify channel is live (not closing, not expired)
         if (onChainData.isClosing) {
@@ -699,9 +794,115 @@ async function handleRequest(req, res) {
         sigB
       };
 
+      // Compute applied credit for consumption inside tx
+      const _appliedCredit = BigInt(stored.payerCredit || "0") > quoteDebit
+        ? quoteDebit : BigInt(stored.payerCredit || "0");
+
+      // H2: Pre-validate hub-payee channel capacity BEFORE committing payer state.
+      // Prepare hub-payee update so it can be committed atomically with the payer side.
+      let hubChannelAck = null;
+      const payeeKey = String(ticket.payee || "").toLowerCase();
+      const hc = await store.getHubChannel(payeeKey);
+      let hcPrepared = null;
+      if (hc && hc.channelId && hc.status !== "closed") {
+        const paymentAmount = BigInt(ticket.amount);
+        if (BigInt(hc.balA) < paymentAmount) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "hub-payee channel balance insufficient"));
+        }
+        const newBalA = (BigInt(hc.balA) - paymentAmount).toString();
+        const newBalH = (BigInt(hc.balB) + paymentAmount).toString();
+        const newNonce = hc.nonce + 1;
+        const hcState = {
+          channelId: hc.channelId,
+          stateNonce: newNonce,
+          balA: newBalA,
+          balB: newBalH,
+          locksRoot: ZERO32,
+          stateExpiry: now() + 3600,
+          contextHash: body.channelState.contextHash || ZERO32
+        };
+        const hcSigA = await signChannelState(hcState, wallet);
+        hcPrepared = { expectedNonce: hc.nonce, newBalA, newBalH, newNonce, hcState, hcSigA };
+      }
+
+      // Single atomic tx: payer-side commit + hub-payee CAS + credit consumption
+      // V1+V2: ALL checks run before ANY mutations to avoid partial state on early return
+      // (storage backends do not rollback mutations on early return from tx mutator)
+      let _txReject = null;
       await store.tx((s) => {
-        // C6: Mark quote as consumed to prevent reuse
+        // --- Phase 1: all CAS checks (no mutations) ---
+        // C1: verify quote still exists (prevents double-issue from parallel requests)
+        if (!s.quotes[key]) {
+          _txReject = "quote already consumed (concurrent issue)";
+          return;
+        }
+        // C1: verify payer-channel nonce hasn't advanced (CAS on latestNonce)
+        const curCh = s.channels[body.channelState.channelId];
+        if (curCh && curCh.latestState) {
+          if (Number(curCh.latestNonce) !== Number(body.channelState.stateNonce) - 1) {
+            _txReject = "channel nonce conflict (concurrent issue)";
+            return;
+          }
+        }
+        if (_appliedCredit > 0n) {
+          if (!s.payerCredits) s.payerCredits = {};
+          const payerKey = recoveredA.toLowerCase();
+          const prev = BigInt(s.payerCredits[payerKey] || "0");
+          if (prev < _appliedCredit) {
+            _txReject = "payer credit consumed by concurrent request";
+            return;
+          }
+        }
+        if (hcPrepared) {
+          if (!s.hubChannels) s.hubChannels = {};
+          const cur = s.hubChannels[payeeKey];
+          if (!cur || cur.nonce !== hcPrepared.expectedNonce) {
+            _txReject = "concurrent hub-payee channel update, retry";
+            return;
+          }
+          if (BigInt(cur.balA) < BigInt(ticket.amount)) {
+            _txReject = "hub-payee channel balance insufficient";
+            return;
+          }
+        }
+
+        // --- Phase 2: all checks passed — now mutate ---
         delete s.quotes[key];
+
+        if (_appliedCredit > 0n) {
+          const payerKey = recoveredA.toLowerCase();
+          const prev = BigInt(s.payerCredits[payerKey] || "0");
+          s.payerCredits[payerKey] = (prev - _appliedCredit).toString();
+          console.log("[credits] consumed", _appliedCredit.toString(), "from", payerKey, "remaining:", (prev - _appliedCredit).toString());
+          // SECURITY: mark matching payeeLedger entries as credit_consumed
+          // to prevent double payout via payee/settle after credit rebate
+          let remaining = _appliedCredit;
+          const pEntries = s.payeeLedger?.[payerKey] || [];
+          for (const pe of pEntries) {
+            if (remaining <= 0n) break;
+            if (pe.status !== "issued") continue;
+            const ea = BigInt(pe.amount || "0");
+            if (ea <= remaining) {
+              pe.status = "credit_consumed";
+              pe.creditConsumedAt = now();
+              remaining -= ea;
+            } else {
+              // Partial: split entry — mark consumed portion, keep remainder
+              pe.amount = (ea - remaining).toString();
+              remaining = 0n;
+            }
+          }
+        }
+
+        if (hcPrepared) {
+          const cur = s.hubChannels[payeeKey];
+          cur.balA = hcPrepared.newBalA;
+          cur.balB = hcPrepared.newBalH;
+          cur.nonce = hcPrepared.newNonce;
+          cur.latestState = hcPrepared.hcState;
+          cur.sigA = hcPrepared.hcSigA;
+          cur.status = "open";
+        }
 
         const issuedPayment = {
           paymentId: quote.paymentId,
@@ -742,38 +943,20 @@ async function handleRequest(req, res) {
           status: "issued"
         });
         s.nextSeq = seq + 1;
-      });
 
-      // Update Hub↔Payee channel state (if open)
-      let hubChannelAck = null;
-      const payeeKey = String(ticket.payee || "").toLowerCase();
-      const hc = await store.getHubChannel(payeeKey);
-      if (hc && hc.channelId && hc.status !== "closed") {
-        const paymentAmount = BigInt(ticket.amount);
-        if (BigInt(hc.balA) < paymentAmount) {
-          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "hub-payee channel balance insufficient"));
-        }
-        const newBalA = (BigInt(hc.balA) - paymentAmount).toString();
-        const newBalH = (BigInt(hc.balB) + paymentAmount).toString();
-        const newNonce = hc.nonce + 1;
-        const hcState = {
-          channelId: hc.channelId,
-          stateNonce: newNonce,
-          balA: newBalA,
-          balB: newBalH,
-          locksRoot: ZERO32,
-          stateExpiry: now() + 3600,
-          contextHash: body.channelState.contextHash || ZERO32
-        };
-        const hcSigA = await signChannelState(hcState, wallet);
-        hc.balA = newBalA;
-        hc.balB = newBalH;
-        hc.nonce = newNonce;
-        hc.latestState = hcState;
-        hc.sigA = hcSigA;
-        hc.status = "open";
-        await store.setHubChannel(payeeKey, hc);
-        hubChannelAck = { channelId: hc.channelId, stateNonce: newNonce, balB: newBalH, sigA: hcSigA };
+        // Accumulate payer credits: when a payee has a payer channel,
+        // track the incoming payment so it can be rebated on their next spend.
+        if (!s.payerCredits) s.payerCredits = {};
+        const creditKey = payee; // payee address (lowercase)
+        const prev = BigInt(s.payerCredits[creditKey] || "0");
+        s.payerCredits[creditKey] = (prev + BigInt(ticket.amount)).toString();
+        console.log("[credits] credited", ticket.amount, "to", creditKey, "total:", s.payerCredits[creditKey]);
+      });
+      if (_txReject) {
+        return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", _txReject));
+      }
+      if (hcPrepared) {
+        hubChannelAck = { channelId: hcPrepared.hcState.channelId, stateNonce: hcPrepared.newNonce, balB: hcPrepared.newBalH, sigA: hcPrepared.hcSigA };
       }
 
       webhooks.emit(EVENT.PAYMENT_RECEIVED, {
@@ -784,6 +967,18 @@ async function handleRequest(req, res) {
         amount: ticket.amount,
         asset: ticket.asset
       });
+
+      // Handle registration: if invoice matches a pending registration, create the handle
+      if (HANDLE_ENABLED && quote.invoiceId) {
+        const reg = await store.get("handleRegs", quote.invoiceId);
+        if (reg && reg.handleId) {
+          await store.set("handles", reg.handleId, {
+            handleId: reg.handleId, handleName: reg.handleName, handleDomain: reg.handleDomain,
+            owner: recoveredA, createdAt: now()
+          });
+          console.log("[handles] registered:", reg.handleId, "owner:", recoveredA);
+        }
+      }
 
       // Emit balance.low when agent's remaining balance drops below 10% of total
       const balA = BigInt(body.channelState.balA);
@@ -819,16 +1014,18 @@ async function handleRequest(req, res) {
       if (!ticketPayment) {
         return sendJson(res, 404, makeError("SCP_007_CHANNEL_NOT_FOUND", "ticket not found or already refunded"));
       }
-      if (ticketPayment.status !== "issued") {
-        return sendJson(res, 404, makeError("SCP_007_CHANNEL_NOT_FOUND", "ticket not found or already refunded"));
+      if (ticketPayment.status !== "issued" && ticketPayment.status !== "partially_refunded") {
+        return sendJson(res, 404, makeError("SCP_007_CHANNEL_NOT_FOUND", "ticket not found or already fully refunded"));
       }
 
       // AUTH: require payee auth — only the payee who received the ticket can trigger refunds
       const refundPayee = String(ticketPayment.payee || "").toLowerCase();
       if (!requirePayeeAuth(req, res, pathname, refundPayee, body)) return;
 
-      if (BigInt(body.refundAmount) > BigInt(ticketPayment.amount)) {
-        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "refund exceeds original amount"));
+      const alreadyRefunded = BigInt(ticketPayment.refundAmount || "0");
+      if (BigInt(body.refundAmount) + alreadyRefunded > BigInt(ticketPayment.amount)) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION",
+          "refund exceeds remaining amount (already refunded " + alreadyRefunded.toString() + ")"));
       }
 
       // Build a signed refund state so the payer can advance channel state after refund.
@@ -883,12 +1080,40 @@ async function handleRequest(req, res) {
         sigB
       };
 
+      // V3: use _txReject flag to prevent returning signed state on tx no-op
+      let _refundReject = null;
       await store.tx((s) => {
-        s.payments[ticketPayment.paymentId].status = "refunded";
-        s.payments[ticketPayment.paymentId].refundedAt = now();
-        s.payments[ticketPayment.paymentId].refundReceiptId = receiptId;
-        s.payments[ticketPayment.paymentId].refundAmount = body.refundAmount;
-        s.payments[ticketPayment.paymentId].refundTotalDebit = refundDebit.toString();
+        // Re-check status inside tx to prevent double-refund TOCTOU
+        const payment = s.payments[ticketPayment.paymentId];
+        if (!payment || (payment.status !== "issued" && payment.status !== "partially_refunded")) {
+          _refundReject = "ticket already refunded or status changed";
+          return;
+        }
+        // V4: re-check cumulative refund inside tx to prevent over-refund race
+        const cumulativeRefunded = BigInt(payment.refundAmount || "0") + BigInt(body.refundAmount);
+        if (cumulativeRefunded > BigInt(payment.amount)) {
+          _refundReject = "cumulative refund exceeds original amount";
+          return;
+        }
+        // V5: verify payee has sufficient credits to reverse (prevent withdraw-then-refund drain)
+        const payee = String(ticketPayment.payee || "").toLowerCase();
+        if (!s.payerCredits) s.payerCredits = {};
+        const creditKey = payee;
+        const prevCredit = BigInt(s.payerCredits[creditKey] || "0");
+        const deduction = BigInt(body.refundAmount);
+        if (prevCredit < deduction) {
+          _refundReject = "payee credits insufficient for refund (already withdrawn)";
+          return;
+        }
+
+        // --- all checks passed, now mutate ---
+        const newRefundStatus = cumulativeRefunded === BigInt(payment.amount) ? "refunded" : "partially_refunded";
+        payment.status = newRefundStatus;
+        payment.refundedAt = now();
+        payment.refundReceiptId = receiptId;
+        // V4: accumulate refundAmount, not overwrite
+        payment.refundAmount = cumulativeRefunded.toString();
+        payment.refundTotalDebit = (BigInt(payment.refundTotalDebit || "0") + refundDebit).toString();
         s.channels[ticketPayment.channelId] = {
           ...s.channels[ticketPayment.channelId],
           latestNonce: refundState.stateNonce,
@@ -896,17 +1121,24 @@ async function handleRequest(req, res) {
           sigA: null,
           sigB
         };
-        const payee = String(ticketPayment.payee || "").toLowerCase();
         const entries = (s.payeeLedger && s.payeeLedger[payee]) || [];
         for (const entry of entries) {
-          if (entry.paymentId === ticketPayment.paymentId && entry.status === "issued") {
-            entry.status = "refunded";
+          if (entry.paymentId === ticketPayment.paymentId &&
+              (entry.status === "issued" || entry.status === "partially_refunded")) {
+            entry.status = newRefundStatus;
             entry.refundedAt = now();
             entry.refundReceiptId = receiptId;
+            entry.refundAmount = cumulativeRefunded.toString();
             break;
           }
         }
+        // H1: Reverse payee credits
+        s.payerCredits[creditKey] = (prevCredit - deduction).toString();
+        console.log("[credits] reversed", body.refundAmount, "from", creditKey, "remaining:", s.payerCredits[creditKey]);
       });
+      if (_refundReject) {
+        return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", _refundReject));
+      }
 
       webhooks.emit(EVENT.PAYMENT_REFUNDED, {
         ticketId: body.ticketId,
@@ -934,6 +1166,54 @@ async function handleRequest(req, res) {
       return sendJson(res, 200, payment);
     }
 
+    if (req.method === "GET" && pathname === "/v1/channels/lookup") {
+      const parsed = url.parse(req.url, true);
+      const payer = String((parsed.query && parsed.query.payer) || "").toLowerCase();
+      if (!isHexAddress(payer)) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "payer query must be 0x address"));
+      }
+      // Scan on-chain ChannelOpened events for this payer
+      const channels = [];
+      if (RPC_URL && CONTRACT_ADDRESS) {
+        try {
+          const prov = new ethers.providers.JsonRpcProvider(RPC_URL);
+          const ct = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, prov);
+          const currentBlock = await prov.getBlockNumber();
+          const fromBlock = Math.max(0, currentBlock - 50000);
+          const filterA = ct.filters.ChannelOpened(null, payer);
+          const logsA = await ct.queryFilter(filterA, fromBlock, currentBlock);
+          for (const log of logsA) {
+            const { channelId, participantA, participantB, asset } = log.args;
+            try {
+              const chData = await ct.getChannel(channelId);
+              channels.push({ channelId, participantA, participantB, asset, totalBalance: chData.totalBalance.toString(), latestNonce: Number(chData.latestNonce || 0), isClosing: !!chData.isClosing });
+            } catch (_e) {
+              channels.push({ channelId, participantA, participantB, asset });
+            }
+          }
+        } catch (e) {
+          console.log("[lookup] on-chain scan error:", e.message);
+        }
+      }
+      // Also check hub store for channels with this payer
+      const allPayments = await store.listPayments();
+      const seenIds = new Set(channels.map(c => c.channelId));
+      for (const p of Object.values(allPayments)) {
+        if (p.channelId && !seenIds.has(p.channelId)) {
+          const ch = await store.getChannel(p.channelId);
+          if (ch && ch.participantA && ch.participantA.toLowerCase() === payer) {
+            let tb = "0";
+            if (RPC_URL && CONTRACT_ADDRESS) {
+              try { const prov = new ethers.providers.JsonRpcProvider(RPC_URL); const ct = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, prov); const cd = await ct.getChannel(p.channelId); tb = cd.totalBalance.toString(); } catch (_) {}
+            }
+            channels.push({ channelId: p.channelId, participantA: ch.participantA, participantB: HUB_ADDRESS, totalBalance: tb });
+            seenIds.add(p.channelId);
+          }
+        }
+      }
+      return sendJson(res, 200, { payer, channels });
+    }
+
     if (req.method === "GET" && pathname.startsWith("/v1/channels/")) {
       const channelId = pathname.split("/").pop();
       if (!isHex32(channelId)) {
@@ -947,9 +1227,28 @@ async function handleRequest(req, res) {
       // SECURITY: redact signatures and raw state — these are close authorizations.
       // Exposing both sigA+sigB would let anyone call cooperativeClose on-chain.
       const { sigA, sigB, latestState, ...safe } = ch;
+      const safeState = latestState ? { balA: latestState.balA, balB: latestState.balB, stateNonce: latestState.stateNonce } : null;
+      let onChainTotal = null;
+      if (RPC_URL && CONTRACT_ADDRESS && isHex32(channelId)) {
+        try {
+          const prov = new ethers.providers.JsonRpcProvider(RPC_URL);
+          const ct = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, prov);
+          const chData = await ct.getChannel(channelId);
+          onChainTotal = chData.totalBalance.toString();
+        } catch (_e) { /* ignore */ }
+      }
+      // Include payer credits if participantA has any
+      let payerCredit = "0";
+      if (ch.participantA) {
+        const credits = await store.tx((s) => s.payerCredits?.[ch.participantA.toLowerCase()] || "0");
+        payerCredit = credits;
+      }
       return sendJson(res, 200, {
         ...safe,
-        hasSignedState: !!(sigA || sigB)
+        hasSignedState: !!(sigA || sigB),
+        onChainTotalBalance: onChainTotal,
+        latestState: safeState,
+        payerCredit
       });
     }
 
@@ -1034,11 +1333,18 @@ async function handleRequest(req, res) {
       for (const entry of ledger) {
         const amt = BigInt(entry.amount);
         if (entry.status === "refunded") {
-          earned -= amt;
+          // Full refund — subtract the refunded amount (not the full original)
+          const refunded = BigInt(entry.refundAmount || entry.amount);
+          earned += amt - refunded;
+          continue;
+        }
+        if (entry.status === "partially_refunded") {
+          const refunded = BigInt(entry.refundAmount || "0");
+          earned += amt - refunded;
           continue;
         }
         earned += amt;
-        if (entry.status === "settled") settled += BigInt(entry.amount);
+        if (entry.status === "settled") settled += amt;
       }
       return sendJson(res, 200, {
         payee,
@@ -1413,16 +1719,26 @@ async function handleRequest(req, res) {
         return sendJson(res, statusCode, makeError(errorCode, err.message || "tx failed", statusCode >= 500));
       }
 
-      // Mark entries as settled
+      // Mark entries as settled and debit payerCredits to prevent double payout
       await store.tx((s) => {
         const entries = s.payeeLedger[payee] || [];
+        let settledTotal = 0n;
         for (const entry of entries) {
           if (entry.status === "settling" && entry.settlementId === settlementId) {
             entry.status = "settled";
             entry.settleTx = txHash;
             entry.settledAt = now();
+            settledTotal += BigInt(entry.amount || "0");
             delete entry.settlementId;
           }
+        }
+        // SECURITY: debit payerCredits by the settled amount to prevent
+        // double payout via credit/withdraw after payee/settle
+        if (settledTotal > 0n && s.payerCredits) {
+          const cur = BigInt(s.payerCredits[payee] || "0");
+          const newCr = cur > settledTotal ? cur - settledTotal : 0n;
+          s.payerCredits[payee] = newCr.toString();
+          if (cur > 0n) console.log("[settle] debited payerCredits for", payee, "by", settledTotal.toString(), "was:", cur.toString(), "now:", newCr.toString());
         }
         if (idemScopeKey) {
           if (!s.settlements) s.settlements = {};
@@ -1518,6 +1834,421 @@ async function handleRequest(req, res) {
       const channelId = parsed.query.channelId || parsed.query.channel || null;
       const limit = Number(parsed.query.limit || 50);
       return sendJson(res, 200, webhooks.poll({ since, channelId, limit }));
+    }
+
+    // --- Payer cooperative close: hub returns sigB so payer can close on-chain ---
+    if (req.method === "POST" && pathname.startsWith("/v1/channels/") && pathname.endsWith("/close")) {
+      const parts = pathname.split("/");
+      const channelId = parts[parts.length - 2];
+      if (!isHex32(channelId)) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid channel id"));
+      const body = await parseBody(req);
+      const { sig } = body;
+      if (!sig) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "sig required (sign channelId)"));
+      // Verify payer owns the channel
+      let recovered;
+      try {
+        recovered = ethers.utils.verifyMessage(ethers.utils.arrayify(channelId), sig);
+      } catch (_e) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid signature"));
+      }
+      let ch = await store.getChannel(channelId);
+      // For nonce-0 channels (no tickets issued), create state from on-chain data
+      if (!ch || !ch.latestState) {
+        try {
+          const signer = getHubSigner();
+          const contract = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, signer);
+          const onChain = await contract.getChannel(channelId);
+          const total = onChain.totalBalance.toBigInt();
+          if (total === 0n) return sendJson(res, 409, makeError("SCP_007_CHANNEL_NOT_FOUND", "channel already closed on-chain"));
+          const pA = onChain.participantA || onChain[0];
+          const pB = onChain.participantB || onChain[1];
+          // H8: verify hub is a participant in this channel
+          if (pA.toLowerCase() !== HUB_ADDRESS.toLowerCase() && pB.toLowerCase() !== HUB_ADDRESS.toLowerCase()) {
+            return sendJson(res, 403, makeError("SCP_009_POLICY_VIOLATION", "hub is not a participant in this channel"));
+          }
+          ch = {
+            channelId, participantA: pA, participantB: pB,
+            latestState: { channelId, balA: total.toString(), balB: "0", stateNonce: 0, locksRoot: ethers.constants.HashZero, contextHash: ethers.constants.HashZero },
+            latestNonce: 0, status: "open"
+          };
+        } catch (e) {
+          return sendJson(res, 404, makeError("SCP_007_CHANNEL_NOT_FOUND", "channel not found: " + e.message));
+        }
+      }
+      if (recovered.toLowerCase() !== (ch.participantA || "").toLowerCase()) {
+        return sendJson(res, 403, makeError("SCP_009_POLICY_VIOLATION", "sig must be from participantA"));
+      }
+      // M5: prevent repeated close requests — reject if a pending close already exists
+      if (ch.pendingCloseState) {
+        const pendingExpiry = ch.pendingCloseState.stateExpiry || 0;
+        if (pendingExpiry > Math.floor(Date.now() / 1000)) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION",
+            "close already pending — submit the existing sigB on-chain or wait for expiry"));
+        }
+      }
+      // Apply payer credit to channel state before closing
+      const hubSigner = getHubSigner();
+      if (!hubSigner) return sendJson(res, 503, makeError("SCP_010_SETTLEMENT_UNAVAILABLE", "hub signer not available"));
+      // Fetch on-chain totalBalance to ensure balA+balB matches contract
+      let onChainTotal;
+      try {
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, hubSigner);
+        const onChainData = await contract.getChannel(channelId);
+        onChainTotal = onChainData.totalBalance.toBigInt();
+        if (onChainTotal === 0n) {
+          return sendJson(res, 409, makeError("SCP_007_CHANNEL_NOT_FOUND", "channel already closed on-chain"));
+        }
+      } catch (e) {
+        return sendJson(res, 503, makeError("SCP_010_SETTLEMENT_UNAVAILABLE", "on-chain lookup failed: " + e.message));
+      }
+      const payerKey = recovered.toLowerCase();
+      let creditApplied = 0n;
+      const hubBalA = BigInt(ch.latestState.balA || "0");
+      const hubBalB = BigInt(ch.latestState.balB || "0");
+      const hubTotal = hubBalA + hubBalB;
+      // Reconcile: give any drift (from fees/rounding) to payer
+      const drift = onChainTotal - hubTotal;
+      let newBalA = hubBalA + (drift > 0n ? drift : 0n);
+      let newBalB = hubBalB - (drift < 0n ? -drift : 0n);
+      if (newBalB < 0n) { newBalA = newBalA + newBalB; newBalB = 0n; }
+      console.log("[close] reconcile: onChain=" + onChainTotal + " hubStore=" + hubTotal + " drift=" + drift + " adjBalA=" + newBalA + " adjBalB=" + newBalB);
+      // Transfer credit from hub side (balB) to payer side (balA)
+      // NOTE: credit is NOT consumed here — it's consumed when the channel is actually
+      // closed on-chain. This prevents credit loss if the close tx reverts.
+      // H8: Only apply credit if tickets were issued on this channel (latestNonce > 0).
+      // Nonce-0 channels never had tickets, so cross-channel credit must not apply.
+      const credit = (ch.latestNonce > 0)
+        ? await store.tx((s) => BigInt(s.payerCredits?.[payerKey] || "0"))
+        : 0n;
+      if (credit > 0n && newBalB > 0n) {
+        creditApplied = credit > newBalB ? newBalB : credit;
+        newBalA = newBalA + creditApplied;
+        newBalB = newBalB - creditApplied;
+        console.log("[close] credit in close state:", creditApplied.toString(), "newBalA:", newBalA.toString(), "newBalB:", newBalB.toString());
+      }
+      // Build close state (bump nonce, apply credit)
+      const closeState = {
+        channelId: ch.latestState.channelId,
+        stateNonce: Number(ch.latestState.stateNonce) + 1,
+        balA: newBalA.toString(),
+        balB: newBalB.toString(),
+        locksRoot: ch.latestState.locksRoot || ethers.constants.HashZero,
+        stateExpiry: Math.floor(Date.now() / 1000) + 3600,
+        contextHash: ch.latestState.contextHash || ethers.constants.HashZero
+      };
+      // Hub signs the close state as sigB
+      const TH = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("ChannelState(bytes32 channelId,uint64 stateNonce,uint256 balA,uint256 balB,bytes32 locksRoot,uint64 stateExpiry,bytes32 contextHash)"));
+      const s2 = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(
+        ["bytes32","bytes32","uint64","uint256","uint256","bytes32","uint64","bytes32"],
+        [TH, closeState.channelId, closeState.stateNonce, closeState.balA, closeState.balB, closeState.locksRoot, closeState.stateExpiry, closeState.contextHash]
+      ));
+      const dm = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(
+        ["bytes32","bytes32","bytes32","uint256","address"],
+        [ethers.utils.keccak256(ethers.utils.toUtf8Bytes("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")),
+         ethers.utils.keccak256(ethers.utils.toUtf8Bytes("X402StateChannel")),
+         ethers.utils.keccak256(ethers.utils.toUtf8Bytes("1")),
+         CHAIN_ID, CONTRACT_ADDRESS]
+      ));
+      const dg = ethers.utils.keccak256(ethers.utils.solidityPack(["string","bytes32","bytes32"],["\x19\x01", dm, s2]));
+      const sigB = ethers.utils.joinSignature(hubSigner._signingKey().signDigest(dg));
+      // Store creditApplied in channel record so confirm-close can use the hub-derived value
+      await store.tx((s) => {
+        if (!s.channels[channelId]) s.channels[channelId] = {};
+        s.channels[channelId].pendingCloseCredit = creditApplied.toString();
+        s.channels[channelId].pendingCloseState = closeState;
+      });
+      console.log("[close] issuing sigB for channel", channelId, "payer:", recovered, "creditApplied:", creditApplied.toString());
+      return sendJson(res, 200, {
+        channelId, state: closeState, sigB, creditApplied: creditApplied.toString(),
+        message: "Sign this state as sigA then call cooperativeClose(state, sigA, sigB) on contract " + CONTRACT_ADDRESS
+      });
+    }
+
+    // --- Confirm channel closed (client calls after on-chain tx succeeds) ---
+    if (req.method === "POST" && pathname.startsWith("/v1/channels/") && pathname.endsWith("/confirm-close")) {
+      const parts = pathname.split("/");
+      const channelId = parts[parts.length - 2];
+      if (!isHex32(channelId)) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid channel id"));
+      await parseBody(req); // consume body but ignore caller-supplied values
+      // Verify on-chain that channel is actually closed
+      try {
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, getHubSigner());
+        const onChainData = await contract.getChannel(channelId);
+        if (!onChainData.totalBalance.isZero()) {
+          return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "channel still open on-chain"));
+        }
+      } catch (e) {
+        return sendJson(res, 503, makeError("SCP_010_SETTLEMENT_UNAVAILABLE", "on-chain check failed"));
+      }
+      // Mark channel closed in store and consume credit using hub-stored value (not caller input)
+      const ch = await store.getChannel(channelId);
+      const creditUsed = ch?.pendingCloseCredit ? BigInt(ch.pendingCloseCredit) : 0n;
+      await store.tx((s) => {
+        if (s.channels[channelId]) {
+          s.channels[channelId].status = "closed";
+          delete s.channels[channelId].pendingCloseCredit;
+          delete s.channels[channelId].pendingCloseState;
+        }
+        if (creditUsed > 0n && ch && ch.participantA) {
+          const pk = ch.participantA.toLowerCase();
+          if (!s.payerCredits) s.payerCredits = {};
+          const cur = BigInt(s.payerCredits[pk] || "0");
+          s.payerCredits[pk] = (cur > creditUsed ? cur - creditUsed : 0n).toString();
+          // SECURITY: mark payeeLedger entries as credit_consumed
+          let rem = creditUsed;
+          const pe2 = s.payeeLedger?.[pk] || [];
+          for (const e of pe2) {
+            if (rem <= 0n) break;
+            if (e.status !== "issued") continue;
+            const ea = BigInt(e.amount || "0");
+            if (ea <= rem) { e.status = "credit_consumed"; e.creditConsumedAt = now(); rem -= ea; }
+            else { e.amount = (ea - rem).toString(); rem = 0n; }
+          }
+        }
+      });
+      console.log("[close] confirmed closed:", channelId, "creditConsumed:", creditUsed.toString());
+      return sendJson(res, 200, { ok: true, channelId, status: "closed" });
+    }
+
+    // --- Credit-only payment (no channel required) ---
+    if (req.method === "POST" && pathname === "/v1/credit/pay") {
+      const body = await parseBody(req);
+      const { payer, payee, amount, sig, invoiceId, nonce: cpNonce } = body;
+      if (!isHexAddress(payer) || !isHexAddress(payee) || !amount || !sig) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "payer, payee, amount, sig required"));
+      }
+      if (!cpNonce || typeof cpNonce !== "string") {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "nonce required"));
+      }
+      const amt = BigInt(amount);
+      if (amt <= 0n) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "amount must be > 0"));
+      // Verify signature: payer signs keccak256(payer + payee + amount + invoiceId + nonce)
+      const msg = ethers.utils.solidityKeccak256(
+        ["address", "address", "uint256", "string", "string"],
+        [payer, payee, amount, invoiceId || "", cpNonce]
+      );
+      let recovered;
+      try {
+        recovered = ethers.utils.verifyMessage(ethers.utils.arrayify(msg), sig);
+      } catch (e) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid signature"));
+      }
+      if (recovered.toLowerCase() !== payer.toLowerCase()) {
+        return sendJson(res, 403, makeError("SCP_009_POLICY_VIOLATION", "sig does not match payer"));
+      }
+      // Atomic: check replay + check balance + transfer — all in one tx
+      const payId = "cpay_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      const payerKey = payer.toLowerCase();
+      const payeeKey = payee.toLowerCase();
+      let txResult = null;
+      await store.tx((s) => {
+        if (!s.spentCreditNonces) s.spentCreditNonces = {};
+        if (s.spentCreditNonces[cpNonce]) { txResult = "replay"; return; }
+        if (!s.payerCredits) s.payerCredits = {};
+        const pc = BigInt(s.payerCredits[payerKey] || "0");
+        if (pc < amt) { txResult = "insufficient"; return; }
+        // Mark nonce spent + debit + credit + record — all atomic
+        s.spentCreditNonces[cpNonce] = now();
+        s.payerCredits[payerKey] = (pc - amt).toString();
+        const pp = BigInt(s.payerCredits[payeeKey] || "0");
+        s.payerCredits[payeeKey] = (pp + amt).toString();
+        if (!s.payments) s.payments = {};
+        s.payments[payId] = {
+          paymentId: payId, status: "issued", createdAt: now(),
+          invoiceId: invoiceId || "", payee, payer,
+          amount: amount, fee: "0", totalDebit: amount, type: "credit"
+        };
+        if (!s.payeeLedger) s.payeeLedger = {};
+        if (!s.payeeLedger[payeeKey]) s.payeeLedger[payeeKey] = [];
+        const seq = Number(s.nextSeq || 1);
+        s.payeeLedger[payeeKey].push({
+          seq, createdAt: now(), paymentId: payId,
+          invoiceId: invoiceId || "", amount, asset: "credit", status: "issued"
+        });
+        s.nextSeq = seq + 1;
+        txResult = "ok";
+      });
+      if (txResult === "replay") {
+        return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "nonce already used"));
+      }
+      if (txResult === "insufficient") {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION",
+          "insufficient credit"));
+      }
+      console.log("[credit-pay]", payerKey, "->", payeeKey, amount, "payId:", payId);
+      return sendJson(res, 200, { ok: true, paymentId: payId, amount, payer, payee, type: "credit" });
+    }
+
+    // --- Credit balance check ---
+    if (req.method === "GET" && pathname === "/v1/credit/balance") {
+      const { query } = url.parse(req.url, true);
+      const addr = (query && query.address || "").toLowerCase();
+      if (!addr) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "address required"));
+      const credit = await store.tx((s) => {
+        return s.payerCredits?.[addr] || "0";
+      });
+      return sendJson(res, 200, { address: addr, credit });
+    }
+
+    // --- Credit withdrawal: hub sends ETH on-chain to the user ---
+    if (req.method === "POST" && pathname === "/v1/credit/withdraw") {
+      const body = await parseBody(req);
+      const addr = (body.address || "").toLowerCase();
+      if (!addr || !isHexAddress(addr)) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "valid address required"));
+      const sig = body.sig;
+      if (!sig) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "signature required"));
+      const amount = body.amount;
+      if (!amount || BigInt(amount) <= 0n) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "amount required"));
+      const nonce = body.nonce;
+      if (!nonce || typeof nonce !== "string") return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "nonce required"));
+      // Verify signature: keccak256(address, amount, nonce, "withdraw")
+      const msgHash = ethers.utils.solidityKeccak256(["address", "uint256", "string", "string"], [addr, amount, nonce, "withdraw"]);
+      let recovered;
+      try {
+        recovered = ethers.utils.verifyMessage(ethers.utils.arrayify(msgHash), sig).toLowerCase();
+      } catch (e) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid signature"));
+      }
+      if (recovered !== addr) return sendJson(res, 403, makeError("SCP_009_POLICY_VIOLATION", "signature does not match address"));
+      // Atomic: check replay, check balance, debit credit — all in one tx BEFORE sending ETH
+      let debitOk = false;
+      await store.tx((s) => {
+        if (!s.spentWithdrawNonces) s.spentWithdrawNonces = {};
+        if (s.spentWithdrawNonces[nonce]) return; // replay — debitOk stays false
+        if (!s.payerCredits) s.payerCredits = {};
+        const cur = BigInt(s.payerCredits[addr] || "0");
+        if (cur < BigInt(amount)) return; // insufficient — debitOk stays false
+        // Debit BEFORE sending (prevents TOCTOU)
+        s.payerCredits[addr] = (cur - BigInt(amount)).toString();
+        s.spentWithdrawNonces[nonce] = now();
+        debitOk = true;
+      });
+      if (!debitOk) {
+        // Distinguish replay from insufficient
+        const isReplay = await store.tx((s) => !!(s.spentWithdrawNonces?.[nonce]));
+        if (isReplay) return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "nonce already used"));
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "insufficient credit"));
+      }
+      // Send ETH on-chain (credit already debited — if tx fails, re-credit)
+      try {
+        const signer = getHubSigner();
+        const tx = await signer.sendTransaction({ to: ethers.utils.getAddress(addr), value: ethers.BigNumber.from(amount), gasLimit: 21000 });
+        await tx.wait(1);
+        console.log("[credit-withdraw]", addr, amount, "tx:", tx.hash);
+        return sendJson(res, 200, { ok: true, address: addr, amount, txHash: tx.hash });
+      } catch (e) {
+        // Re-credit on tx failure (nonce stays spent to prevent retry of same sig)
+        await store.tx((s) => {
+          if (!s.payerCredits) s.payerCredits = {};
+          const cur = BigInt(s.payerCredits[addr] || "0");
+          s.payerCredits[addr] = (cur + BigInt(amount)).toString();
+        });
+        console.error("[credit-withdraw] failed (re-credited):", e.message);
+        return sendJson(res, 500, makeError("SCP_011_SETTLEMENT_FAILED", "withdrawal tx failed: " + e.message));
+      }
+    }
+
+    // --- Handle routes ---
+    if (HANDLE_ENABLED && req.method === "GET" && pathname.startsWith("/handle/")) {
+      const rawName = decodeURIComponent(pathname.slice("/handle/".length)).toLowerCase().replace(/^@/, "");
+      if (!rawName || !/^[a-z0-9][a-z0-9_.-]{0,30}[a-z0-9]?$/.test(rawName)) {
+        return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "invalid handle name"));
+      }
+      const handleDomain = HANDLE_DOMAIN;
+      if (!handleDomain) return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "HANDLE_DOMAIN not configured"));
+      const handleId = rawName + "@" + handleDomain;
+      const existing = await store.get("handles", handleId);
+      // M3: verify Payment-Signature contains a real issued payment, not just header presence
+      const payHeader = req.headers["payment-signature"] || req.headers["x-payment"];
+      if (payHeader) {
+        let payProof = null;
+        try { payProof = typeof payHeader === "string" ? JSON.parse(payHeader) : payHeader; } catch (_e) { /* invalid */ }
+        const paymentId = payProof?.paymentId;
+        const verifiedPayment = paymentId ? await store.getPayment(paymentId) : null;
+        if (verifiedPayment && (verifiedPayment.status === "issued" || verifiedPayment.status === "partially_refunded")) {
+          if (existing) {
+            return sendJson(res, 200, { handle: handleId, owner: existing.owner, registered: true });
+          }
+          return sendJson(res, 200, { handle: handleId, registered: false, message: "Payment accepted — handle registration pending" });
+        }
+        // Invalid or forged payment header — fall through to 402
+      }
+      const { query } = url.parse(req.url, true);
+      const amt = (query && query.amount) || HANDLE_PRICE;
+      const handleBase = process.env.HANDLE_PUBLIC_URL || `https://${handleDomain}`;
+      const hubEp = process.env.HUB_PUBLIC_ENDPOINT || process.env.HUB_ENDPOINT || process.env.HUB_URL || `http://${HOST}:${PORT}`;
+      if (existing) {
+        const payInv = "inv_h_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+        const mkOffer = (asset, label) => ({
+          scheme: "statechannel-hub-v1", network: `eip155:${CHAIN_ID}`,
+          asset, maxAmountRequired: amt, label,
+          resource: `${handleBase}/handle/${encodeURIComponent(rawName)}`,
+          extensions: { "statechannel-hub-v1": {
+            intent: "pay_handle", handle: handleId,
+            hubEndpoint: hubEp, hubName: HUB_NAME,
+            payeeAddress: existing.owner,
+            invoiceId: payInv,
+            stream: { amount: amt, t: 1 }
+          }}
+        });
+        return sendJson(res, 402, {
+          handle: handleId, owner: existing.owner,
+          accepts: [
+            mkOffer(HANDLE_ASSET, "ETH"),
+            mkOffer(DEFAULT_ASSET, "USDC")
+          ]
+        });
+      }
+      // Free registration: just create the handle directly
+      if (HANDLE_PRICE === "0") {
+        // Need a wallet address — check query param or require POST
+        const ownerAddr = (query && query.owner) || null;
+        if (!ownerAddr || !isHexAddress(ownerAddr)) {
+          return sendJson(res, 402, {
+            handle: handleId, message: "Handle @" + rawName + " is available — claim it free!",
+            free: true,
+            accepts: [{
+              scheme: "free", network: `eip155:${CHAIN_ID}`,
+              asset: HANDLE_ASSET, maxAmountRequired: "0",
+              resource: `${handleBase}/handle/${encodeURIComponent(rawName)}`,
+              extensions: { "statechannel-hub-v1": {
+                intent: "register_handle_free", handle: handleId,
+                hubEndpoint: hubEp, hubName: HUB_NAME
+              }}
+            }]
+          });
+        }
+        await store.set("handles", handleId, {
+          handleId, handleName: rawName, handleDomain,
+          owner: ownerAddr, createdAt: now()
+        });
+        console.log("[handles] free registration:", handleId, "owner:", ownerAddr);
+        return sendJson(res, 200, { handle: handleId, owner: ownerAddr, registered: true, free: true });
+      }
+      const regInv = "inv_hr_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      await store.set("handleRegs", regInv, { handleId, handleName: rawName, handleDomain, createdAt: now() });
+      return sendJson(res, 402, {
+        handle: handleId, message: "Handle @" + rawName + " is available — pay to register",
+        accepts: [{
+          scheme: "statechannel-hub-v1", network: `eip155:${CHAIN_ID}`,
+          asset: HANDLE_ASSET, maxAmountRequired: HANDLE_PRICE,
+          resource: `${handleBase}/handle/${encodeURIComponent(rawName)}`,
+          extensions: { "statechannel-hub-v1": {
+            intent: "register_handle", handle: handleId,
+            hubEndpoint: hubEp, hubName: HUB_NAME,
+            payeeAddress: HUB_ADDRESS,
+            invoiceId: regInv,
+            stream: { amount: HANDLE_PRICE, t: 1 }
+          }}
+        }]
+      });
+    }
+
+    if (HANDLE_ENABLED && req.method === "GET" && pathname.startsWith("/v1/handles/")) {
+      const handleId = decodeURIComponent(pathname.slice("/v1/handles/".length)).toLowerCase();
+      const existing = await store.get("handles", handleId);
+      if (!existing) return sendJson(res, 404, makeError("SCP_009_POLICY_VIOLATION", "handle not found"));
+      return sendJson(res, 200, existing);
     }
 
     return sendJson(res, 404, makeError("SCP_009_POLICY_VIOLATION", "route not found"));
