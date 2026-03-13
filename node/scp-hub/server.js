@@ -86,7 +86,8 @@ const CHANNEL_ABI = [
   "function getChannel(bytes32 channelId) external view returns (tuple(address participantA, address participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry, uint256 totalBalance, bool isClosing, uint64 closeDeadline, uint64 latestNonce))",
   "event ChannelOpened(bytes32 indexed channelId, address indexed participantA, address indexed participantB, address asset, uint64 challengePeriodSec, uint64 channelExpiry)",
   "event Deposited(bytes32 indexed channelId, address indexed sender, uint256 amount, uint256 newTotalBalance)",
-  "event Rebalanced(bytes32 indexed fromChannelId, bytes32 indexed toChannelId, uint256 amount, uint256 fromNewTotal, uint256 toNewTotal)"
+  "event Rebalanced(bytes32 indexed fromChannelId, bytes32 indexed toChannelId, uint256 amount, uint256 fromNewTotal, uint256 toNewTotal)",
+  "function getChannelsByParticipant(address participant) external view returns (bytes32[] memory)"
 ];
 const STORE_PATH = process.env.STORE_PATH || path.resolve(__dirname, "./data/store.json");
 const WORKERS = Number(process.env.HUB_WORKERS || 0);
@@ -111,11 +112,13 @@ if (IS_PRODUCTION && !REDIS_URL && !ALLOW_UNSAFE_PROD_STORAGE) {
 
 // Provider + funded wallet for on-chain settlement (lazy init)
 let hubSigner = null;
+let hubSignerTs = 0;
 function getHubSigner() {
-  if (hubSigner) return hubSigner;
+  if (hubSigner && Date.now() - hubSignerTs < 300000) return hubSigner;
   if (!RPC_URL) return null;
   const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
   hubSigner = wallet.connect(provider);
+  hubSignerTs = Date.now();
   return hubSigner;
 }
 
@@ -1172,27 +1175,23 @@ async function handleRequest(req, res) {
       if (!isHexAddress(payer)) {
         return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "payer query must be 0x address"));
       }
-      // Scan on-chain ChannelOpened events for this payer
+      // Look up channels via contract view function (single eth_call, no event scanning)
       const channels = [];
       if (RPC_URL && CONTRACT_ADDRESS) {
         try {
           const prov = new ethers.providers.JsonRpcProvider(RPC_URL);
           const ct = new ethers.Contract(CONTRACT_ADDRESS, CHANNEL_ABI, prov);
-          const currentBlock = await prov.getBlockNumber();
-          const fromBlock = Math.max(0, currentBlock - 50000);
-          const filterA = ct.filters.ChannelOpened(null, payer);
-          const logsA = await ct.queryFilter(filterA, fromBlock, currentBlock);
-          for (const log of logsA) {
-            const { channelId, participantA, participantB, asset } = log.args;
+          const channelIds = await ct.getChannelsByParticipant(payer);
+          for (const channelId of channelIds) {
             try {
               const chData = await ct.getChannel(channelId);
-              channels.push({ channelId, participantA, participantB, asset, totalBalance: chData.totalBalance.toString(), latestNonce: Number(chData.latestNonce || 0), isClosing: !!chData.isClosing });
+              channels.push({ channelId, participantA: chData.participantA, participantB: chData.participantB, asset: chData.asset, totalBalance: chData.totalBalance.toString(), latestNonce: Number(chData.latestNonce || 0), isClosing: !!chData.isClosing });
             } catch (_e) {
-              channels.push({ channelId, participantA, participantB, asset });
+              channels.push({ channelId });
             }
           }
         } catch (e) {
-          console.log("[lookup] on-chain scan error:", e.message);
+          console.log("[lookup] on-chain lookup error:", e.message);
         }
       }
       // Also check hub store for channels with this payer
@@ -2043,12 +2042,13 @@ async function handleRequest(req, res) {
       let txResult = null;
       await store.tx((s) => {
         if (!s.spentCreditNonces) s.spentCreditNonces = {};
-        if (s.spentCreditNonces[cpNonce]) { txResult = "replay"; return; }
+        const creditReplayKey = `${payerKey}:${cpNonce}`;
+        if (s.spentCreditNonces[creditReplayKey]) { txResult = "replay"; return; }
         if (!s.payerCredits) s.payerCredits = {};
         const pc = BigInt(s.payerCredits[payerKey] || "0");
         if (pc < amt) { txResult = "insufficient"; return; }
         // Mark nonce spent + debit + credit + record — all atomic
-        s.spentCreditNonces[cpNonce] = now();
+        s.spentCreditNonces[creditReplayKey] = now();
         s.payerCredits[payerKey] = (pc - amt).toString();
         const pp = BigInt(s.payerCredits[payeeKey] || "0");
         s.payerCredits[payeeKey] = (pp + amt).toString();
@@ -2114,18 +2114,19 @@ async function handleRequest(req, res) {
       let debitOk = false;
       await store.tx((s) => {
         if (!s.spentWithdrawNonces) s.spentWithdrawNonces = {};
-        if (s.spentWithdrawNonces[nonce]) return; // replay — debitOk stays false
+        const withdrawReplayKey = `${addr.toLowerCase()}:${nonce}`;
+        if (s.spentWithdrawNonces[withdrawReplayKey]) return; // replay — debitOk stays false
         if (!s.payerCredits) s.payerCredits = {};
         const cur = BigInt(s.payerCredits[addr] || "0");
         if (cur < BigInt(amount)) return; // insufficient — debitOk stays false
         // Debit BEFORE sending (prevents TOCTOU)
         s.payerCredits[addr] = (cur - BigInt(amount)).toString();
-        s.spentWithdrawNonces[nonce] = now();
+        s.spentWithdrawNonces[withdrawReplayKey] = now();
         debitOk = true;
       });
       if (!debitOk) {
         // Distinguish replay from insufficient
-        const isReplay = await store.tx((s) => !!(s.spentWithdrawNonces?.[nonce]));
+        const isReplay = await store.tx((s) => !!(s.spentWithdrawNonces?.[`${addr.toLowerCase()}:${nonce}`]));
         if (isReplay) return sendJson(res, 409, makeError("SCP_009_POLICY_VIOLATION", "nonce already used"));
         return sendJson(res, 400, makeError("SCP_009_POLICY_VIOLATION", "insufficient credit"));
       }
