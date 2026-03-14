@@ -13,7 +13,7 @@ const DEFAULT_RPC_TIMEOUT_MS = 8000;
 const RPC_PRESETS = {
   1: ["https://eth.llamarpc.com", "https://ethereum-rpc.publicnode.com"],
   8453: ["https://mainnet.base.org", "https://base-rpc.publicnode.com"],
-  11155111: ["https://ethereum-sepolia-rpc.publicnode.com", "https://rpc.sepolia.org"],
+  11155111: ["https://ethereum-sepolia-rpc.publicnode.com", "https://1rpc.io/sepolia"],
   84532: ["https://sepolia.base.org", "https://base-sepolia-rpc.publicnode.com"]
 };
 
@@ -510,11 +510,9 @@ class ScpAgentClient {
   async discoverOffers(resourceUrl, method = "GET") {
     const parseOffers = (res) => (res.body.accepts || []).filter((offer) => {
       const offerNetwork = normalizeNetworkLabel(offer.network);
-      if (!offerNetwork || !this.networkAllowlist.includes(offerNetwork)) { console.log("rejected net:", offer_network); return false; }
-      if (this.assetAllowlist.length > 0 && !this.assetAllowlist.includes(offer.asset.toLowerCase())) { console.log("rejected asset:", offer.asset); return false; }
-      const schemeOk = offer.scheme === "statechannel-hub-v1" || offer.scheme === "statechannel-direct-v1";
-      if (!schemeOk) console.log("rejected scheme:", offer.scheme);
-      return schemeOk;
+      if (!offerNetwork || !this.networkAllowlist.includes(offerNetwork)) return false;
+      if (this.assetAllowlist.length > 0 && !this.assetAllowlist.includes(offer.asset.toLowerCase())) return false;
+      return offer.scheme === "statechannel-hub-v1" || offer.scheme === "statechannel-direct-v1";
     });
 
     const directRes = await this.http.request(method, resourceUrl);
@@ -522,7 +520,6 @@ class ScpAgentClient {
       if (directRes.body && Array.isArray(directRes.body.accepts)) {
         const directOffers = parseOffers(directRes);
         if (directOffers.length > 0) return directOffers;
-      console.log("directRes body", directRes.body);
       } else if (directRes.statusCode === 402) {
         throw new Error("payee returned 402 without accepts[] offers");
       }
@@ -1211,7 +1208,7 @@ class ScpAgentClient {
     const amount = BigInt(options.amount || "0");
     const challengePeriod = Number(options.challengePeriodSec || 86400);
     const channelExpiry = Number(options.channelExpiry || now() + 86400 * 30);
-    const salt = options.salt || ethers.utils.formatBytes32String(`ag-${now()}-${participantB.slice(2, 8)}`);
+    const salt = options.salt || ethers.utils.hexlify(crypto.randomBytes(32));
     const channelNetwork = normalizeNetworkLabel(options.network);
     const hubFlags = Number.isInteger(options.hubFlags)
       ? options.hubFlags
@@ -1227,7 +1224,12 @@ class ScpAgentClient {
       );
       gasLimit = estimated.mul(130).div(100);
     } catch (_e) {
-      console.error("ESTIMATE GAS FAILED:", _e); gasLimit = ethers.BigNumber.from("700000");
+      const msg = _e.reason || _e.message || "";
+      if (/execution reverted|CALL_EXCEPTION/i.test(msg)) {
+        throw new Error("openChannel would revert on-chain (salt collision or contract rejection). Try again.");
+      }
+      console.error("ESTIMATE GAS FAILED (using fallback):", msg);
+      gasLimit = ethers.BigNumber.from("700000");
     }
     const txOpts = { ...baseTxOpts, gasLimit };
     const tx = await contract.openChannel(

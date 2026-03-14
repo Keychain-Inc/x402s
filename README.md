@@ -18,6 +18,7 @@ A practical guide to using x402s — state channel protocol for agents and APIs.
 - [Part 7: Monitoring and Safety](#part-7-monitoring-and-safety)
 - [Part 8: Testing and Development](#part-8-testing-and-development)
 - [Part 9: Production Checklist](#part-9-production-checklist)
+- [Part 10: Browser Wallet (scp-pay)](#part-10-browser-wallet-scp-pay)
 - [Configuration Reference](#configuration-reference)
 - [Troubleshooting](#troubleshooting)
 
@@ -236,15 +237,15 @@ Create `offers.json`:
     {
       "network": "base",
       "asset": ["usdc", "eth"],
-      "maxAmountRequired": ["0.50", "0.005"],
+      "maxAmountRequired": ["0.50", "0.0002"],
       "mode": "hub",
       "hubName": "pay.eth",
-      "hubEndpoint": "http://159.223.150.70/hub/base"
+      "hubEndpoint": "https://pogchamp.tv/hub/base"
     }
   ],
   "pathPrices": {
-    "/v1/weather": { "usdc": "0.50", "eth": "0.005" },
-    "/v1/premium": { "usdc": "1.00", "eth": "0.01" }
+    "/v1/weather": { "usdc": "0.50", "eth": "0.0002" },
+    "/v1/premium": { "usdc": "1.00", "eth": "0.0004" }
   }
 }
 ```
@@ -960,6 +961,135 @@ Both use CREATE2 for deterministic addresses. The canonical address is `0x07ECA6
 
 ---
 
+## Part 10: Browser Wallet (scp-pay)
+
+A single-file browser app for making SCP payments without a CLI. Located at `scp-pay/index.html`.
+
+### Features
+
+- Create or import an agent wallet (private key stored in localStorage)
+- Auto-discover 402 offers from any URL
+- Open/fund channels on-chain from the browser
+- Sign EIP-712 state updates and issue tickets
+- Payment history fetched from hub
+- Credit-based payments (no channel needed if hub credits are available)
+- Cooperative channel close with on-chain verification
+- Handle payments (`pr0@pogchamp.tv` style addresses)
+- Multi-network: Sepolia, Base Sepolia, Base, Mainnet
+
+### Usage
+
+Open `scp-pay/index.html` in a browser, or serve it:
+
+```bash
+npx serve scp-pay -p 8080
+# Open http://127.0.0.1:8080
+```
+
+Live: `https://statechannel.org/scppay/`
+
+### How It Works
+
+The browser Agent class implements the full SCP protocol:
+
+1. **Discover** — `GET <url>` → parse 402 offers
+2. **Choose** — score offers by channel readiness (2=funded, 1=underfunded, 0=none), pick cheapest
+3. **Ensure** — if no channel, open one on-chain (handles ERC-20 approve + openChannel)
+4. **Quote** — `POST /v1/tickets/quote` to hub
+5. **Sign** — EIP-712 `signDigest` on new channel state
+6. **Issue** — `POST /v1/tickets/issue` to hub
+7. **Pay** — retry original URL with `PAYMENT-SIGNATURE` header
+
+State is persisted to `localStorage` keyed by `wallet:network:contract`.
+
+### Embedding as an iframe (Widget Mode)
+
+scp-pay can be embedded as a payment widget inside any web app. This is how the chat demo (`scp-chat`) works — it opens scp-pay in a hidden iframe, and the iframe handles the full payment flow.
+
+**Basic embed:**
+
+```html
+<iframe id="payFrame"
+  src="https://statechannel.org/scppay/?autopay=1&url=https://yourapi.com/pay"
+  allow="clipboard-write"
+  style="width:420px;height:620px;border:none">
+</iframe>
+```
+
+**URL parameters:**
+
+| Param | Description |
+|-------|-------------|
+| `autopay=1` | Enable per-URL auto-pay (approve once, then auto-confirm) |
+| `url=<encoded-url>` | Pre-fill the payment URL |
+
+**postMessage API:**
+
+The parent page communicates with the iframe via `postMessage`:
+
+```javascript
+// Parent → iframe: configure payment
+iframe.contentWindow.postMessage({
+  type: "x402:config",
+  url: "https://yourapi.com/pay",   // Payment URL
+  autoLim: 0.001                     // Auto-pay hourly limit (ETH)
+}, "*");
+```
+
+```javascript
+// iframe → Parent: payment succeeded
+window.addEventListener("message", (e) => {
+  if (e.data.type === "x402:payment:success") {
+    console.log("Paid!", e.data.payId, e.data.amount, e.data.payer);
+  }
+  if (e.data.type === "x402:needs-confirm") {
+    // Show the iframe to the user (first time for this URL)
+    document.getElementById("overlay").style.display = "flex";
+  }
+});
+```
+
+**Messages from iframe:**
+
+| Message type | Fields | When |
+|-------------|--------|------|
+| `x402:payment:success` | `payId`, `amount`, `payer`, `ticketId` | Payment completed |
+| `x402:needs-confirm` | — | User must approve (first visit to URL) |
+
+**Auto-pay flow:**
+
+1. First payment to a URL → iframe sends `x402:needs-confirm` → parent shows the iframe for user to confirm and optionally check "Auto-pay for this URL"
+2. Subsequent payments to the same URL → iframe auto-pays silently → parent receives `x402:payment:success` without showing the iframe
+
+This means the parent app can keep the iframe hidden by default and only reveal it when `x402:needs-confirm` fires. For approved URLs, users just see a toast — no UI interruption.
+
+**Example (chat-style integration):**
+
+```javascript
+function sendPaidMessage(msg) {
+  pendingMsg = msg;
+  // Load iframe hidden
+  payFrame.src = SCPPAY + "?autopay=1&url=" + encodeURIComponent(payUrl);
+  payFrame.onload = () => {
+    payFrame.contentWindow.postMessage({
+      type: "x402:config", url: payUrl, autoLim: 0.001
+    }, "*");
+  };
+}
+
+window.addEventListener("message", (e) => {
+  if (e.data.type === "x402:needs-confirm") {
+    overlay.classList.add("show"); // Show iframe to user
+  }
+  if (e.data.type === "x402:payment:success") {
+    overlay.classList.remove("show");
+    submitMessage(pendingMsg, e.data); // Send with payment proof
+  }
+});
+```
+
+---
+
 ## Configuration Reference
 
 ### All Commands
@@ -972,6 +1102,7 @@ Both use CREATE2 for deterministic addresses. The canonical address is `0x07ECA6
 | `npm run scp:agent:pay -- <url> [hub\|direct]` | Pay a 402 URL |
 | `npm run scp:agent:pay -- <url> --method POST --json '{...}'` | Pay with HTTP method + body |
 | `npm run scp:agent:pay -- <channelId> <amount>` | Pay through a specific channel |
+| `npm run scp:light -- <url> [options]` | Auto-pay: discover, fund channel, pay (one step) |
 | `npm run scp:agent:server` | Agent as HTTP service (port 4060) |
 | `npm run scp:agent` | Agent status + optional local `/pay` helper |
 | `npm run scp:agent:stream -- <url> [options]` | Stream (pay in a loop) any 402 URL |
@@ -990,6 +1121,7 @@ Both use CREATE2 for deterministic addresses. The canonical address is `0x07ECA6
 | `npm run scp:meow` | Start meow API template |
 | `npm run scp:music` | Start music streaming API (port 4095) |
 | `npm run scp:music:stream -- [url] [options]` | CLI stream client for music API |
+| `npm run scp:chat` | Start chat API (port 4044) |
 | **Testing** | |
 | `npm run scp:test` | Contract tests |
 | `npm run scp:test:deep` | Integration tests |
@@ -1032,6 +1164,7 @@ Both use CREATE2 for deterministic addresses. The canonical address is `0x07ECA6
 | Agent HTTP Server | 4060 |
 | Meow API | 4090 |
 | Music API | 4095 |
+| Chat API | 4044 |
 
 ---
 
