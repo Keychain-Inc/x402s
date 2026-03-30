@@ -97,8 +97,8 @@ describe("SCP Music API", function () {
     process.env.MUSIC_PRICE_ETH = "0.0000001";
     process.env.MUSIC_STREAM_T_SEC = "5";
 
-    delete require.cache[require.resolve("../node/music-api/server")];
-    ({ createMusicServer } = require("../node/music-api/server"));
+    delete require.cache[require.resolve("../node/scp-demo/music-api/server")];
+    ({ createMusicServer } = require("../node/scp-demo/music-api/server"));
 
     hubServer = http.createServer((req, res) => {
       if (req.method === "GET" && req.url === "/.well-known/x402") {

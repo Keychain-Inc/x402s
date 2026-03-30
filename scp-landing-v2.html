@@ -1552,7 +1552,7 @@
   </p>
 
   <div class="hero-actions">
-    <a href="/scppay" class="btn-primary" data-route="pay">Launch Live Demo</a>
+    <a href="/scp-pay/" class="btn-primary" data-route="pay">Launch Live Demo</a>
     <a href="#routes" class="btn-secondary">See Live Routes</a>
   </div>
 
@@ -1710,7 +1710,7 @@
         <p>Launch the lightweight payer for a single route and watch the browser-side payment loop in action.</p>
         <div class="route-path" data-route-text="pay"></div>
         <div class="route-actions">
-          <a class="btn-inline" data-route="pay" href="/scppay">Launch route</a>
+          <a class="btn-inline" data-route="pay" href="/scp-pay/">Launch route</a>
         </div>
       </article>
       <article class="feature-card route-card stagger">
@@ -2112,7 +2112,7 @@ verify.seen.set(result.paymentId, resp);
       hub: baseOrigin + "/hub/sepolia/.well-known/x402",
       handle: baseOrigin + "/handle/pr0",
       meow: meowUrl,
-      pay: baseOrigin + "/scppay?url=" + encodeURIComponent(meowUrl),
+      pay: baseOrigin + "/scp-pay/?url=" + encodeURIComponent(meowUrl),
       agent: baseOrigin + "/scpapp/",
       music: baseOrigin + "/music"
     };

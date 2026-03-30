@@ -110,6 +110,36 @@ function fmtHuman(raw, decimals) {
   return formatAmount(raw, decimals);
 }
 
+function normalizeAssetAddress(address) {
+  const addr = String(address || "").toLowerCase();
+  if (!addr || addr === "eth" || addr === ethers.constants.AddressZero.toLowerCase()) {
+    return ethers.constants.AddressZero.toLowerCase();
+  }
+  return addr;
+}
+
+function pickCreditAmount(body, asset, legacyField) {
+  const map = body && typeof body === "object" ? body.payerCreditsByAsset || body.creditsByAsset || {} : {};
+  const assetKey = normalizeAssetAddress(asset);
+  if (map && typeof map === "object" && map[assetKey] != null) {
+    return String(map[assetKey]);
+  }
+  return String((body && body[legacyField]) || "0");
+}
+
+function formatCreditsMap(body, chainId, fieldName) {
+  const map = body && typeof body === "object" ? body[fieldName] || {} : {};
+  if (!map || typeof map !== "object") return [];
+  const out = [];
+  for (const [asset, amount] of Object.entries(map)) {
+    if (String(amount || "0") === "0") continue;
+    const sym = assetSymbol(asset, chainId);
+    const dec = assetDecimals(asset, chainId);
+    out.push(`${fmtHuman(String(amount), dec)} ${sym}`);
+  }
+  return out;
+}
+
 function networkLabel(chainId) {
   const labels = { 1: "Ethereum", 8453: "Base", 11155111: "Sepolia", 84532: "Base Sepolia" };
   return labels[chainId] || `chain:${chainId}`;
@@ -602,8 +632,11 @@ async function main() {
             if (latestState.balB != null) {
               console.log(`      hubBalB:    ${fmtHuman(String(latestState.balB), dec)} ${sym}`);
             }
-            if (body.payerCredit != null) {
-              console.log(`      payerCredit:${fmtHuman(String(body.payerCredit), dec)} ${sym}`);
+            const payerCredits = formatCreditsMap(body, chainId, "payerCreditsByAsset");
+            if (payerCredits.length) {
+              console.log(`      payerCredits:${payerCredits.join(", ")}`);
+            } else if (body.payerCredit != null && body.payerCredit !== "0") {
+              console.log(`      payerCredit:${fmtHuman(String(body.payerCredit), dec)} ${sym} (legacy)`);
             }
             console.log(`      signed:     ${body.hasSignedState ? "yes" : "no"}`);
           } else {
@@ -840,9 +873,12 @@ async function main() {
             const creditRes = await httpClient.request("GET", `${hubUrl}/v1/credit/balance?address=${encodeURIComponent(agent.wallet.address)}`).catch(() => null);
             if (creditRes && creditRes.statusCode === 200 && creditRes.body) {
               const credit = creditRes.body;
-              const creditBal = credit.balance || credit.credit || "0";
-              if (creditBal !== "0") {
-                console.log(`  │    credit:        ${fmtHuman(creditBal, dec)} ${sym}`);
+              const creditLines = formatCreditsMap(credit, chainId, "creditsByAsset");
+              const creditBal = pickCreditAmount(credit, ch.asset, "credit");
+              if (creditLines.length) {
+                console.log(`  │    credit:        ${creditLines.join(", ")}`);
+              } else if (creditBal !== "0") {
+                console.log(`  │    credit:        ${fmtHuman(creditBal, dec)} ${sym} (legacy)`);
               }
             }
           } catch (_e) {
@@ -913,7 +949,10 @@ async function main() {
                 const localNonce = ch.nonce || 0;
                 const nonceDiff = Number(hubNonce) - Number(localNonce);
                 const syncLabel = nonceDiff === 0 ? "synced" : nonceDiff > 0 ? `hub ahead +${nonceDiff}` : `local ahead ${nonceDiff}`;
-                console.log(`       hub: nonce=${hubNonce} ${syncLabel}  credit=${hc.payerCredit || "0"}`);
+                const payerCredits = formatCreditsMap(hc, chainId, "payerCreditsByAsset");
+                const legacyCredit = String(hc.payerCredit || "0");
+                const creditLabel = payerCredits.length ? payerCredits.join(", ") : legacyCredit !== "0" ? `${legacyCredit} legacy` : "0";
+                console.log(`       hub: nonce=${hubNonce} ${syncLabel}  credit=${creditLabel}`);
               }
             } catch (_e) { /* skip */ }
           }
@@ -929,10 +968,14 @@ async function main() {
           try {
             const res = await httpClient.request("GET", `${hubUrl}/v1/credit/balance?address=${encodeURIComponent(agent.wallet.address)}`);
             if (res.statusCode === 200 && res.body) {
+              const creditLines = formatCreditsMap(res.body, normalizeChainId(process.env.NETWORK) || 8453, "creditsByAsset");
               const bal = res.body.balance || res.body.credit || "0";
-              if (bal !== "0") {
+              if (creditLines.length) {
                 if (!hasCredit) { console.log("  Credit:"); hasCredit = true; }
-                console.log(`    ${hubUrl}: ${bal}`);
+                console.log(`    ${hubUrl}: ${creditLines.join(", ")}`);
+              } else if (bal !== "0") {
+                if (!hasCredit) { console.log("  Credit:"); hasCredit = true; }
+                console.log(`    ${hubUrl}: ${bal} (legacy)`);
               }
             }
           } catch (_e) { /* skip */ }

@@ -2093,7 +2093,7 @@ footer {
       <div class="feat">
         <div class="feat-icon">08</div>
         <h3>Credit system</h3>
-        <p>Hub credit lets agents pay instantly without opening a channel first. Query balance with <code style="font-family:var(--mono);font-size:0.72rem;color:var(--cyan)">/v1/credit/balance</code>.</p>
+        <p>Hub credit lets agents pay instantly without opening a channel first. Balances are asset-scoped via <code style="font-family:var(--mono);font-size:0.72rem;color:var(--cyan)">/v1/credit/balance</code>, and withdrawals now specify an asset explicitly.</p>
       </div>
       <div class="feat">
         <div class="feat-icon">09</div>
@@ -2274,7 +2274,7 @@ footer {
       <div class="feat">
         <div class="feat-icon" style="color:var(--cyan)">GET</div>
         <h3>/v1/credit/balance</h3>
-        <p>Query agent credit balance on the hub. Credit allows instant payments without an open channel.</p>
+        <p>Query agent credit balances on the hub. Returns <code>creditsByAsset</code> plus temporary legacy compatibility fields during migration. Withdrawals use <code>/v1/credit/withdraw</code> with an explicit <code>asset</code> field.</p>
       </div>
       <div class="feat">
         <div class="feat-icon" style="color:var(--cyan)">GET</div>
