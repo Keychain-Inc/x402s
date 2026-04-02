@@ -51,7 +51,7 @@ async function run() {
   const disc = await req("GET", CHAT + "/pay");
   if (disc.status !== 402) throw new Error("expected 402, got " + disc.status);
   const offer = disc.body.accepts[0]; // ETH offer
-  const ext = offer.extensions["statechannel-hub-v1"];
+  const ext = offer.extensions["statechannel"];
   const HUB = ext.hubEndpoint;
   console.log("   ETH price:", offer.maxAmountRequired, "wei to", ext.payeeAddress.slice(0, 12) + "...");
   console.log("   Hub:", HUB);
@@ -133,7 +133,7 @@ async function run() {
   const msg = process.argv[2] || "gm from SCP agent on Base!";
   console.log("\n5. Sending: \"" + msg + "\"");
   const paymentPayload = {
-    scheme: "statechannel-hub-v1",
+    scheme: "statechannel",
     paymentId,
     invoiceId: ext.invoiceId,
     ticket,

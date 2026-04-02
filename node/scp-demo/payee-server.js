@@ -257,14 +257,15 @@ function makeOffers(cfg, payeeAddress, routePath, routeCfg, invoiceStore) {
       hubEndpoint
     });
     offers.push({
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       network,
       asset,
       maxAmountRequired: price,
       payTo: hubName,
       resource,
       extensions: {
-        "statechannel-hub-v1": {
+        "statechannel": {
+          route: "hub",
           hubName,
           hubEndpoint,
           mode: "proxy_hold",
@@ -278,14 +279,15 @@ function makeOffers(cfg, payeeAddress, routePath, routeCfg, invoiceStore) {
     });
     if (cfg.enableDirect && canVerifyDirectOnChain(cfg)) {
       offers.push({
-        scheme: "statechannel-direct-v1",
+        scheme: "statechannel",
         network,
         asset,
         maxAmountRequired: price,
         payTo: payeeAddress,
         resource,
         extensions: {
-          "statechannel-direct-v1": {
+          "statechannel": {
+            route: "direct",
             mode: "direct",
             quoteExpiry: now() + 120,
             invoiceId,

@@ -3,7 +3,7 @@ info:
   title: pay.eth SCP Hub API
   version: 1.0.0-draft
   description: >
-    Reference HTTP API for statechannel-hub-v1. This API supports payee
+    Reference HTTP API for statechannel hub route. This API supports payee
     and non-payee (peer_simple) ticket flows.
 servers:
   - url: https://pay.eth

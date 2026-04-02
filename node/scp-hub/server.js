@@ -556,7 +556,7 @@ async function handleRequest(req, res) {
         hubName: HUB_NAME,
         address: HUB_ADDRESS,
         chainId: CHAIN_ID,
-        schemes: ["statechannel-hub-v1"],
+        schemes: ["statechannel"],
         supportedAssets: [DEFAULT_ASSET, ethers.constants.AddressZero],
         modes: ["proxy_hold", "peer_simple"],
         signature: {
@@ -2343,10 +2343,11 @@ async function handleRequest(req, res) {
       if (existing) {
         const payInv = "inv_h_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
         const mkOffer = (asset, label) => ({
-          scheme: "statechannel-hub-v1", network: `eip155:${CHAIN_ID}`,
+          scheme: "statechannel", network: `eip155:${CHAIN_ID}`,
           asset, maxAmountRequired: amt, label,
           resource: `${handleBase}/handle/${encodeURIComponent(rawName)}`,
-          extensions: { "statechannel-hub-v1": {
+          extensions: { "statechannel": {
+            route: "hub",
             intent: "pay_handle", handle: handleId,
             hubEndpoint: hubEp, hubName: HUB_NAME,
             payeeAddress: existing.owner,
@@ -2374,7 +2375,8 @@ async function handleRequest(req, res) {
               scheme: "free", network: `eip155:${CHAIN_ID}`,
               asset: HANDLE_ASSET, maxAmountRequired: "0",
               resource: `${handleBase}/handle/${encodeURIComponent(rawName)}`,
-              extensions: { "statechannel-hub-v1": {
+              extensions: { "statechannel": {
+                route: "hub",
                 intent: "register_handle_free", handle: handleId,
                 hubEndpoint: hubEp, hubName: HUB_NAME
               }}
@@ -2393,10 +2395,11 @@ async function handleRequest(req, res) {
       return sendJson(res, 402, {
         handle: handleId, message: "Handle @" + rawName + " is available — pay to register",
         accepts: [{
-          scheme: "statechannel-hub-v1", network: `eip155:${CHAIN_ID}`,
+          scheme: "statechannel", network: `eip155:${CHAIN_ID}`,
           asset: HANDLE_ASSET, maxAmountRequired: HANDLE_PRICE,
           resource: `${handleBase}/handle/${encodeURIComponent(rawName)}`,
-          extensions: { "statechannel-hub-v1": {
+          extensions: { "statechannel": {
+            route: "hub",
             intent: "register_handle", handle: handleId,
             hubEndpoint: hubEp, hubName: HUB_NAME,
             payeeAddress: HUB_ADDRESS,

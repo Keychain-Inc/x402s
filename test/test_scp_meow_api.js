@@ -95,7 +95,7 @@ describe("SCP Meow API", function () {
     expect(res.body.message).to.contain("/meow");
     expect(res.body.pricing[0].human).to.eq("0.0000001");
     expect(res.body.pricing[0].price).to.eq("100000000000");
-    expect(res.body.accepts[0].scheme).to.eq("statechannel-hub-v1");
+    expect(res.body.accepts[0].scheme).to.eq("statechannel");
     expect(res.body.accepts[0].maxAmountRequired).to.eq("100000000000");
     expect(res.body.accepts[0].asset).to.eq(ethers.constants.AddressZero);
   });
@@ -105,7 +105,7 @@ describe("SCP Meow API", function () {
     expect(first.statusCode).to.eq(402);
 
     const offer = first.body.accepts[0];
-    const invoiceId = offer.extensions["statechannel-hub-v1"].invoiceId;
+    const invoiceId = offer.extensions["statechannel"].invoiceId;
     const paymentId = `pay_${Date.now()}`;
     const amount = offer.maxAmountRequired;
 
@@ -124,7 +124,7 @@ describe("SCP Meow API", function () {
     };
     const sig = await signTicketDraft(draft, hubWallet);
     const paymentHeader = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       invoiceId,
       paymentId,
       ticket: { ...draft, sig }
@@ -154,7 +154,7 @@ describe("SCP Meow API", function () {
       expect(first.statusCode).to.eq(402);
 
       const offer = first.body.accepts[0];
-      const invoiceId = offer.extensions["statechannel-hub-v1"].invoiceId;
+      const invoiceId = offer.extensions["statechannel"].invoiceId;
       const paymentId = `pay_${Date.now()}`;
       const amount = offer.maxAmountRequired;
 
@@ -173,7 +173,7 @@ describe("SCP Meow API", function () {
       };
       const sig = await signTicketDraft(draft, hubWallet);
       const paymentHeader = {
-        scheme: "statechannel-hub-v1",
+        scheme: "statechannel",
         invoiceId,
         paymentId,
         ticket: { ...draft, sig }

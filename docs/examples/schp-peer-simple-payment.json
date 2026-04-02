@@ -60,7 +60,8 @@
     "sig": "0x1234"
   },
   "paymentPayloadForPayeeOrPeerEndpoint": {
-    "scheme": "statechannel-hub-v1",
+    "scheme": "statechannel",
+    "route": "hub",
     "paymentId": "pay_01JXYZP5A3GQ3T6WXPXJQW3HSA",
     "invoiceId": "inv_01JXYZP2F8NT4M44RRFV78MNVW",
     "ticket": {

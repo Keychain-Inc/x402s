@@ -65,7 +65,7 @@ This proposal sits above the current SCP implementation:
 
 Recommended scheme naming:
 
-- Existing mode: `statechannel-hub-v1`
+- Existing mode: `statechannel` (hub route)
 - Bonded mode: `statechannel-hub-bonded-v1`
 
 Payees that want slash-backed hub assurances SHOULD advertise the bonded mode only.

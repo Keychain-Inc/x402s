@@ -5,7 +5,7 @@
  * Keeps a live paid connection to any payee URL by repeating paid calls on
  * cadence.  For hub offers the cadence is read from:
  *
- *   accepts[].extensions["statechannel-hub-v1"].stream.t   (fallback 5s)
+ *   accepts[].extensions["statechannel"].stream.t   (fallback 5s)
  *
  * Usage:
  *   npm run scp:agent:stream -- <url> [options]

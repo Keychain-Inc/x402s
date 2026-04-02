@@ -65,7 +65,7 @@ async function run() {
     const first = await requestJson("GET", payeeUrl);
     assert(first.statusCode === 402, "payee should return 402 first");
     const offer = first.body.accepts[0];
-    const ext = offer.extensions["statechannel-hub-v1"];
+    const ext = offer.extensions["statechannel"];
     const invoiceId = ext.invoiceId;
     const paymentId = `pay_demo_${Date.now()}`;
 
@@ -102,7 +102,7 @@ async function run() {
     delete ticket.hubChannelAck;
 
     const paymentPayload = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       paymentId,
       invoiceId,
       ticket,

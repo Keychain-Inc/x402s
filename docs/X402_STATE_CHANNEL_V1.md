@@ -69,8 +69,8 @@ All identifiers MUST be unique in their namespace. UUIDv7 or 32-byte random valu
 
 Payees using this protocol MUST advertise one or more schemes:
 
-- `scheme = "statechannel-hub-v1"`
-- `scheme = "statechannel-direct-v1"`
+- `scheme = "statechannel"` with `route = "hub"`
+- `scheme = "statechannel"` with `route = "direct"`
 
 Example `402` body fragment:
 
@@ -78,14 +78,15 @@ Example `402` body fragment:
 {
   "accepts": [
     {
-      "scheme": "statechannel-hub-v1",
+      "scheme": "statechannel",
       "network": "eip155:8453",
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bDa02913",
       "maxAmountRequired": "1000000",
       "payTo": "pay.eth",
       "resource": "https://payee.example/v1/data",
       "extensions": {
-        "statechannel-hub-v1": {
+        "statechannel": {
+          "route": "hub",
           "hubName": "pay.eth",
           "hubEndpoint": "https://pay.eth/.well-known/x402",
           "mode": "proxy_hold",
@@ -98,14 +99,16 @@ Example `402` body fragment:
       }
     },
     {
-      "scheme": "statechannel-direct-v1",
+      "scheme": "statechannel",
+      "route": "direct",
       "network": "eip155:8453",
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bDa02913",
       "maxAmountRequired": "1000000",
       "payTo": "0xPayee...",
       "resource": "https://payee.example/v1/data",
       "extensions": {
-        "statechannel-direct-v1": {
+        "statechannel": {
+          "route": "direct",
           "mode": "direct",
           "invoiceId": "01J...",
           "quoteExpiry": 1770000000,
@@ -207,7 +210,7 @@ Replay safety MUST include all of:
 ### 10.1 Discovery
 
 1. `A -> B`: unauthenticated request.
-2. `B -> A`: `HTTP 402` containing one or more SCP offers (`statechannel-hub-v1`, `statechannel-direct-v1`).
+2. `B -> A`: `HTTP 402` containing one or more SCP offers (`statechannel` (hub route), `statechannel` (direct route)).
 3. `A` verifies network and asset policy, then chooses route policy (`hub`, `direct`, or `auto`).
 
 ### 10.2 Ticket and Debit Authorization
@@ -308,7 +311,7 @@ Where:
 
 ### 12.1 Required Payee `402` Fields
 
-1. `scheme = statechannel-hub-v1` or `scheme = statechannel-direct-v1`
+1. `scheme = "statechannel"` with `route = "hub"` or `route = "direct"`
 2. `network`
 3. `asset`
 4. `payTo` (hub identity for hub route, payee identity for direct route)
@@ -320,7 +323,8 @@ Header name SHOULD remain compatible with x402 (`PAYMENT-SIGNATURE` or implement
 
 ```json
 {
-  "scheme": "statechannel-hub-v1",
+  "scheme": "statechannel",
+  "route": "hub",
   "paymentId": "01J...",
   "invoiceId": "01J...",
   "ticket": {
@@ -352,11 +356,12 @@ Hub response MAY include:
 
 `sigB` SHOULD be persisted by the payer for challenge-watch proofs.
 
-### 12.4 Direct Scheme Retry Payload (`statechannel-direct-v1`)
+### 12.4 Direct Scheme Retry Payload (`statechannel` (direct route))
 
 ```json
 {
-  "scheme": "statechannel-direct-v1",
+  "scheme": "statechannel",
+  "route": "direct",
   "paymentId": "01J...",
   "invoiceId": "01J...",
   "direct": {
@@ -516,7 +521,7 @@ Errors SHOULD include machine-readable details and retryability hints.
 
 ### 18.4 Profile P3 (`direct`)
 
-1. Supports `statechannel-direct-v1`.
+1. Supports `statechannel` (direct route).
 2. Payee verifies direct signed state and nonce monotonicity.
 3. Agent supports route selection and optional direct-first fallback.
 
@@ -626,7 +631,7 @@ Hub responds with `{ webhookId, status: "active" }`. Subscriber MAY update or de
 
 Direct variant:
 
-1. Agent accesses `B`, gets `402` with `statechannel-direct-v1`.
+1. Agent accesses `B`, gets `402` with `statechannel` (direct route).
 2. Agent signs direct channel state update for `B`.
 3. Agent retries with direct payload and `sigA`.
 4. Payee verifies signer, nonce, and value delta, then serves response.

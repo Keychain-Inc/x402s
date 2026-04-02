@@ -1,6 +1,6 @@
 # SCP Node Hub (Reference)
 
-Minimal Node.js reference service for `statechannel-hub-v1`.
+Minimal Node.js reference service for `statechannel` (hub route).
 
 ## Run
 

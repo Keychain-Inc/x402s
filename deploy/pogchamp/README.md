@@ -35,5 +35,5 @@ pm2 save
 
 ```bash
 curl -sS https://pogchamp.tv/hub/sepolia/.well-known/x402 | jq '.hubName,.chainId'
-curl -sS https://pogchamp.tv/handle/pr0 | jq '.accepts[0].network,.accepts[0].extensions["statechannel-hub-v1"].hubEndpoint'
+curl -sS https://pogchamp.tv/handle/pr0 | jq '.accepts[0].network,.accepts[0].extensions["statechannel"].hubEndpoint'
 ```

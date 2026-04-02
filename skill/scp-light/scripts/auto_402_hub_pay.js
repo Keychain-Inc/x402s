@@ -460,10 +460,10 @@ async function ensureHubChannelReady({
   dryRun,
   networks
 }) {
-  const ext = (offer.extensions || {})["statechannel-hub-v1"] || {};
+  const ext = (offer.extensions || {})["statechannel"] || {};
   const hubEndpoint = ext.hubEndpoint;
   if (!hubEndpoint) {
-    throw new Error("Offer is missing statechannel-hub-v1.hubEndpoint");
+    throw new Error("Offer is missing statechannel.hubEndpoint");
   }
 
   const channelKey = `hub:${hubEndpoint}`;
@@ -590,10 +590,10 @@ function offerPassesUserFilters(offer, { requestedNetwork, requestedAsset }) {
 }
 
 function computeOfferFundingPlan({ agent, offer, topupPayments, targetBalanceOverride, hubInfo }) {
-  const ext = (offer.extensions || {})["statechannel-hub-v1"] || {};
+  const ext = (offer.extensions || {})["statechannel"] || {};
   const hubEndpoint = ext.hubEndpoint;
   if (!hubEndpoint) {
-    throw new Error("Offer is missing statechannel-hub-v1.hubEndpoint");
+    throw new Error("Offer is missing statechannel.hubEndpoint");
   }
 
   const channelKey = `hub:${hubEndpoint}`;
@@ -632,7 +632,7 @@ async function checkHubOfferAffordability({
   rpcTimeoutMs,
   networks
 }) {
-  const ext = (offer.extensions || {})["statechannel-hub-v1"] || {};
+  const ext = (offer.extensions || {})["statechannel"] || {};
   const hubEndpoint = ext.hubEndpoint;
   if (!hubEndpoint) {
     return { offer, affordable: false, reason: "missing hubEndpoint" };
@@ -728,11 +728,11 @@ async function maybeFilterHubOffersByAffordability({
   const filteredByUser = offers.filter((offer) =>
     offerPassesUserFilters(offer, { requestedNetwork, requestedAsset })
   );
-  const hubOffers = filteredByUser.filter((o) => o.scheme === "statechannel-hub-v1");
+  const hubOffers = filteredByUser.filter((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub");
   if (!hubOffers.length) return offers;
 
   const hasAnyHubChannel = hubOffers.some((offer) => {
-    const endpoint = ((offer.extensions || {})["statechannel-hub-v1"] || {}).hubEndpoint;
+    const endpoint = ((offer.extensions || {})["statechannel"] || {}).hubEndpoint;
     return endpoint && agent.state.channels[`hub:${endpoint}`];
   });
   if (hasAnyHubChannel) return offers;
@@ -769,22 +769,22 @@ async function maybeFilterHubOffersByAffordability({
   const affordableHubOffers = checks.filter((x) => x.affordable).map((x) => x.offer);
   if (affordableHubOffers.length > 0) {
     const affordableEndpoints = new Set(
-      affordableHubOffers.map((offer) => ((offer.extensions || {})["statechannel-hub-v1"] || {}).hubEndpoint)
+      affordableHubOffers.map((offer) => ((offer.extensions || {})["statechannel"] || {}).hubEndpoint)
     );
     return offers.filter((offer) => {
-      if (offer.scheme !== "statechannel-hub-v1") return true;
-      const endpoint = ((offer.extensions || {})["statechannel-hub-v1"] || {}).hubEndpoint;
+      if (offer.scheme !== "statechannel") return true;
+      const endpoint = ((offer.extensions || {})["statechannel"] || {}).hubEndpoint;
       return endpoint && affordableEndpoints.has(endpoint);
     });
   }
 
-  const directOffers = filteredByUser.filter((o) => o.scheme === "statechannel-direct-v1");
+  const directOffers = filteredByUser.filter((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "direct");
   if (route === "hub" || directOffers.length === 0) {
     throw new Error(
       "No affordable hub offers found for current wallet balance. Lower --topup-payments, use --target-balance, or fund wallet."
     );
   }
-  return offers.filter((offer) => offer.scheme !== "statechannel-hub-v1");
+  return offers.filter((offer) => offer.scheme !== "statechannel");
 }
 
 async function main() {
@@ -887,7 +887,7 @@ async function main() {
     console.log(`Selected offer network: ${offer.network}`);
     console.log(`Selected offer asset: ${offer.asset}`);
 
-    if (offer.scheme === "statechannel-hub-v1") {
+    if (offer.scheme === "statechannel" && ((offer.extensions || {}).statechannel || {}).route === "hub") {
       await ensureHubChannelReady({
         agent,
         offer,
@@ -911,7 +911,7 @@ async function main() {
     }
 
     const payOpts = {
-      route: offer.scheme === "statechannel-direct-v1" ? "direct" : "hub"
+      route: offer.scheme === "statechannel" && ((offer.extensions || {}).statechannel || {}).route === "direct" ? "direct" : "hub"
     };
     const method = getFlag(flags, ["method"]);
     if (method) payOpts.method = String(method).toUpperCase();

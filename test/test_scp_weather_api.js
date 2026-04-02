@@ -69,11 +69,14 @@ describe("SCP Weather API", function () {
     });
   }
 
-  async function fetchPremiumOffer(scheme) {
+  async function fetchPremiumOffer(route) {
     const res = await reqJson("GET", `http://${API_HOST}:${API_PORT}/premium`);
     expect(res.statusCode).to.eq(402);
-    const offer = res.body.accepts.find((entry) => entry.scheme === scheme);
-    expect(offer, `missing offer for scheme ${scheme}`).to.exist;
+    const offer = res.body.accepts.find((entry) =>
+      entry.scheme === "statechannel" &&
+      ((entry.extensions || {}).statechannel || {}).route === route
+    );
+    expect(offer, `missing statechannel offer for route ${route}`).to.exist;
     return offer;
   }
 
@@ -155,8 +158,8 @@ describe("SCP Weather API", function () {
   });
 
   it("rejects fabricated direct payments without a real on-chain channel", async function () {
-    const offer = await fetchPremiumOffer("statechannel-direct-v1");
-    const ext = offer.extensions["statechannel-direct-v1"];
+    const offer = await fetchPremiumOffer("direct");
+    const ext = offer.extensions["statechannel"];
     const invoiceId = ext.invoiceId;
     const paymentId = `pay_fake_direct_${Date.now()}`;
     const amount = offer.maxAmountRequired;
@@ -183,7 +186,7 @@ describe("SCP Weather API", function () {
       contractAddress: contract.address
     });
     const paymentHeader = {
-      scheme: "statechannel-direct-v1",
+      scheme: "statechannel",
       invoiceId,
       paymentId,
       direct: {
@@ -208,8 +211,8 @@ describe("SCP Weather API", function () {
   });
 
   it("accepts a valid direct payment on a real on-chain channel", async function () {
-    const offer = await fetchPremiumOffer("statechannel-direct-v1");
-    const ext = offer.extensions["statechannel-direct-v1"];
+    const offer = await fetchPremiumOffer("direct");
+    const ext = offer.extensions["statechannel"];
     const invoiceId = ext.invoiceId;
     const paymentId = `pay_real_direct_${Date.now()}`;
     const amount = offer.maxAmountRequired;
@@ -252,7 +255,7 @@ describe("SCP Weather API", function () {
       contractAddress: contract.address
     });
     const paymentHeader = {
-      scheme: "statechannel-direct-v1",
+      scheme: "statechannel",
       invoiceId,
       paymentId,
       direct: {
@@ -278,8 +281,8 @@ describe("SCP Weather API", function () {
   });
 
   it("replays the same hub payment with the cached response instead of re-consuming it", async function () {
-    const offer = await fetchPremiumOffer("statechannel-hub-v1");
-    const ext = offer.extensions["statechannel-hub-v1"];
+    const offer = await fetchPremiumOffer("hub");
+    const ext = offer.extensions["statechannel"];
     const invoiceId = ext.invoiceId;
     const paymentId = `pay_hub_replay_${Date.now()}`;
     const amount = offer.maxAmountRequired;
@@ -299,7 +302,7 @@ describe("SCP Weather API", function () {
     const sig = await signTicketDraft(draft, hubWallet);
     issuedByPaymentId.set(paymentId, draft.ticketId);
     const paymentHeader = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       invoiceId,
       paymentId,
       ticket: { ...draft, sig }

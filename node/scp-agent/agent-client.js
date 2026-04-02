@@ -9,6 +9,15 @@ const { resolveAsset, resolveNetwork, resolveHubEndpointForNetwork, toCaip2, ASS
 const ZERO32 = "0x0000000000000000000000000000000000000000000000000000000000000000";
 const ZERO_ADDRESS_LOWER = ethers.constants.AddressZero.toLowerCase();
 const CAP_ASSET_SYMBOLS = ["eth", "usdc", "usdt"];
+
+/** Extract route mode ("hub" | "direct") from a statechannel offer's extensions. */
+function getRoute(offer) {
+  const ext = ((offer.extensions || {}).statechannel || {});
+  return ext.route || (ext.info || {}).route || null;
+}
+function isHub(offer) { return offer.scheme === "statechannel" && getRoute(offer) === "hub"; }
+function isDirect(offer) { return offer.scheme === "statechannel" && getRoute(offer) === "direct"; }
+function isScp(offer) { return offer.scheme === "statechannel"; }
 const DEFAULT_RPC_TIMEOUT_MS = 8000;
 const RPC_PRESETS = {
   1: ["https://eth.llamarpc.com", "https://ethereum-rpc.publicnode.com"],
@@ -203,8 +212,8 @@ function capKeysForOffer(offer) {
 
 function offerDebitAmount(offer) {
   const fallback = String((offer || {}).maxAmountRequired || "0");
-  if (!offer || offer.scheme !== "statechannel-hub-v1") return fallback;
-  const ext = ((offer.extensions || {})["statechannel-hub-v1"] || {});
+  if (!offer || !isScp(offer)) return fallback;
+  const ext = ((offer.extensions || {})["statechannel"] || {});
   const raw = String(((ext.stream || {}).amount ?? "") || "").trim();
   if (/^[0-9]+$/.test(raw)) return raw;
   return fallback;
@@ -523,7 +532,7 @@ class ScpAgentClient {
       const offerNetwork = normalizeNetworkLabel(offer.network);
       if (!offerNetwork || !this.networkAllowlist.includes(offerNetwork)) return false;
       if (this.assetAllowlist.length > 0 && !this.assetAllowlist.includes(offer.asset.toLowerCase())) return false;
-      return offer.scheme === "statechannel-hub-v1" || offer.scheme === "statechannel-direct-v1";
+      return isScp(offer);
     });
 
     const directRes = await this.http.request(method, resourceUrl);
@@ -635,7 +644,7 @@ class ScpAgentClient {
   }
 
   async assessHubOfferAffordability(offer, options = {}) {
-    const ext = (offer.extensions || {})["statechannel-hub-v1"] || {};
+    const ext = (offer.extensions || {})["statechannel"] || {};
     const hubEndpoint = ext.hubEndpoint;
     if (!hubEndpoint) {
       return { offer, affordable: false, reason: "missing hubEndpoint" };
@@ -710,11 +719,11 @@ class ScpAgentClient {
   async prefilterHubOffersByAffordability(offers, route, options = {}) {
     if (route === "direct") return offers;
     const filteredByUser = this.filterOffersByOptions(offers, options);
-    const hubOffers = filteredByUser.filter((o) => o.scheme === "statechannel-hub-v1");
+    const hubOffers = filteredByUser.filter((o) => isHub(o));
     if (hubOffers.length < 2) return offers;
 
     const hasAnyHubChannel = hubOffers.some((o) => {
-      const endpoint = ((o.extensions || {})["statechannel-hub-v1"] || {}).hubEndpoint;
+      const endpoint = ((o.extensions || {})["statechannel"] || {}).hubEndpoint;
       return endpoint && this.state.channels[`hub:${endpoint}`];
     });
     if (hasAnyHubChannel) return offers;
@@ -723,21 +732,21 @@ class ScpAgentClient {
     const affordableHubOffers = checks.filter((x) => x.affordable).map((x) => x.offer);
     if (affordableHubOffers.length > 0) {
       const affordableEndpoints = new Set(
-        affordableHubOffers.map((o) => ((o.extensions || {})["statechannel-hub-v1"] || {}).hubEndpoint)
+        affordableHubOffers.map((o) => ((o.extensions || {})["statechannel"] || {}).hubEndpoint)
       );
       return offers.filter((offer) => {
-        if (offer.scheme !== "statechannel-hub-v1") return true;
-        const endpoint = ((offer.extensions || {})["statechannel-hub-v1"] || {}).hubEndpoint;
+        if (!isScp(offer)) return true;
+        const endpoint = ((offer.extensions || {})["statechannel"] || {}).hubEndpoint;
         return endpoint && affordableEndpoints.has(endpoint);
       });
     }
 
-    const directOffers = filteredByUser.filter((o) => o.scheme === "statechannel-direct-v1");
+    const directOffers = filteredByUser.filter((o) => isDirect(o));
     if (route === "hub" || directOffers.length === 0) {
       const reason = checks.map((x) => x.reason).filter(Boolean)[0] || "wallet balance too low";
       throw new Error(`No affordable hub offers found (${reason})`);
     }
-    return offers.filter((offer) => offer.scheme !== "statechannel-hub-v1");
+    return offers.filter((offer) => !isScp(offer));
   }
 
   async chooseOfferSmart(offers, route, options = {}) {
@@ -747,15 +756,15 @@ class ScpAgentClient {
 
   chooseOffer(offers, route, options = {}) {
     let filtered = this.filterOffersByOptions(offers, options);
-    const hubs = filtered.filter((o) => o.scheme === "statechannel-hub-v1");
-    const directs = filtered.filter((o) => o.scheme === "statechannel-direct-v1");
+    const hubs = filtered.filter((o) => isHub(o));
+    const directs = filtered.filter((o) => isDirect(o));
 
     const offerAmount = (o) => {
       try { return BigInt(offerDebitAmount(o)); } catch (_e) { return 0n; }
     };
 
     const rankHub = (o) => {
-      const ext = (o.extensions || {})["statechannel-hub-v1"] || {};
+      const ext = (o.extensions || {})["statechannel"] || {};
       const endpoint = ext.hubEndpoint;
       if (!endpoint) return 0;
       const ch = this.state.channels[`hub:${endpoint}`];
@@ -768,7 +777,7 @@ class ScpAgentClient {
     };
 
     const rankDirect = (o) => {
-      const ext = (o.extensions || {})["statechannel-direct-v1"] || {};
+      const ext = (o.extensions || {})["statechannel"] || {};
       const payee = ext.payeeAddress;
       if (!payee) return 0;
       const ch = this.state.channels[`direct:${payee.toLowerCase()}`];
@@ -949,7 +958,7 @@ class ScpAgentClient {
   }
 
   async payViaHub(resourceUrl, offer, options = {}) {
-    const ext = offer.extensions["statechannel-hub-v1"];
+    const ext = offer.extensions["statechannel"];
     const hubEndpoint = ext.hubEndpoint;
     const invoiceId = ext.invoiceId || randomId("inv");
     const paymentId = options.paymentId || randomId("pay");
@@ -992,7 +1001,8 @@ class ScpAgentClient {
     const issuedBundle = await this.quoteAndIssueHubTicket(hubEndpoint, contextHash, quoteReq);
 
     const paymentPayload = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
+      route: "hub",
       paymentId,
       invoiceId,
       ticket: issuedBundle.issuedTicket,
@@ -1040,7 +1050,7 @@ class ScpAgentClient {
   }
 
   async payViaDirect(resourceUrl, offer, options = {}) {
-    const ext = offer.extensions["statechannel-direct-v1"];
+    const ext = offer.extensions["statechannel"];
     const invoiceId = ext.invoiceId || randomId("inv");
     const paymentId = options.paymentId || randomId("pay");
     const { method, requestHeaders, requestBody } = this.resolveHttpCallOptions(options);
@@ -1072,7 +1082,8 @@ class ScpAgentClient {
     );
     const sigA = await signChannelState(state, this.wallet);
     const paymentPayload = {
-      scheme: "statechannel-direct-v1",
+      scheme: "statechannel",
+      route: "direct",
       paymentId,
       invoiceId,
       direct: {
@@ -1190,7 +1201,7 @@ class ScpAgentClient {
         `Try: agent:pay ${resourceUrl} ${routes[0]}`
       );
     }
-    if (offer.scheme === "statechannel-direct-v1") {
+    if (isDirect(offer)) {
       return this.payViaDirect(resourceUrl, offer, options);
     }
     return this.payViaHub(resourceUrl, offer, options);
@@ -1517,7 +1528,8 @@ class ScpAgentClient {
       const state = this.nextChannelState(ch.key, amount, contextHash);
       const sigA = await signChannelState(state, this.wallet);
       const paymentPayload = {
-        scheme: "statechannel-direct-v1",
+        scheme: "statechannel",
+        route: "direct",
         paymentId,
         direct: { payer: this.wallet.address, payee: payeeAddress, amount, channelState: state, sigA }
       };

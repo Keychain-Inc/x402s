@@ -182,7 +182,7 @@ describe("SCP Base API", function () {
     expect(res.statusCode).to.eq(402);
     expect(res.body.accepts).to.be.an("array");
 
-    const hubOffers = res.body.accepts.filter((offer) => offer.scheme === "statechannel-hub-v1");
+    const hubOffers = res.body.accepts.filter((offer) => offer.scheme === "statechannel" && ((offer.extensions || {}).statechannel || {}).route === "hub");
     expect(hubOffers.length).to.eq(2);
     expect(hubOffers.every((offer) => offer.network === OFFER_NETWORK)).to.eq(true);
 

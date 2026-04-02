@@ -120,14 +120,15 @@ function makeOffers(path, req) {
 
   // Build offers for primary network
   const accepts = OFFER_ASSETS.map(o => ({
-    scheme: "statechannel-hub-v1",
+    scheme: "statechannel",
     network: NETWORK,
     asset: o.addr,
     maxAmountRequired: o.rawAmount,
     label: o.label,
     resource,
     extensions: {
-      "statechannel-hub-v1": {
+      "statechannel": {
+        route: "hub",
         hubName: o.hubName,
         hubEndpoint: o.hub,
         payeeAddress: PAYEE_ADDR,
@@ -143,14 +144,15 @@ function makeOffers(path, req) {
     if (!caip || caip === NETWORK) continue;
     const hubEp = resolveHubEndpointForNetwork(caip, { baseUrl: pubBase });
     accepts.push({
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       network: caip,
       asset: ZERO_ADDR,
       maxAmountRequired: "100000000000",
       label: "ETH",
       resource,
       extensions: {
-        "statechannel-hub-v1": {
+        "statechannel": {
+          route: "hub",
           hubName: "pay.eth",
           hubEndpoint: hubEp,
           payeeAddress: PAYEE_ADDR,

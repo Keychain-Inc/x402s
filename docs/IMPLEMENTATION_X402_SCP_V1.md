@@ -1,6 +1,6 @@
 # x402 SCP v1 Implementation Bundle
 
-This bundle provides concrete implementation artifacts for `statechannel-hub-v1`.
+This bundle provides concrete implementation artifacts for `statechannel` (hub route).
 
 ## Included Files
 
@@ -38,7 +38,7 @@ This bundle provides concrete implementation artifacts for `statechannel-hub-v1`
 ## Recommended Validation Order (Payment Retry)
 
 1. Validate payload schema.
-2. Validate `scheme == statechannel-hub-v1`.
+2. Validate `scheme == "statechannel"` and `route == "hub"`.
 3. Verify ticket signature and ticket expiry.
 4. Verify `ticket.amount` and `invoiceId` match required payment.
 5. Verify `paymentId` has not already been consumed.

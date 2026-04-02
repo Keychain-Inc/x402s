@@ -1,6 +1,6 @@
 # Music API (Paid Streaming)
 
-Pay-per-second music streaming demo using `statechannel-hub-v1`.
+Pay-per-second music streaming demo using `statechannel` (hub route).
 
 The server exposes a track catalog and a `/music/chunk` endpoint that returns
 402 with stream offers.  Each paid tick unlocks `t` seconds of playback.
@@ -50,7 +50,7 @@ Each 402 response includes a `stream` extension:
 ```json
 {
   "extensions": {
-    "statechannel-hub-v1": {
+    "statechannel": {
       "stream": { "amount": "100000000000", "t": 5 }
     }
   }

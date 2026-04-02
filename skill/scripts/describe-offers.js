@@ -95,14 +95,14 @@ async function main() {
       const human = formatAmount(raw, sym);
       const usd = estimateUsd(raw, sym);
       const net = networkName(o.network);
-      const ext = (o.extensions || {})["statechannel-hub-v1"] || (o.extensions || {})["statechannel-direct-v1"] || {};
+      const ext = (o.extensions || {})["statechannel"] || (o.extensions || {})["statechannel"] || {};
       const fee = ext.feeModel ? `${ext.feeModel.base || 0} + ${ext.feeModel.bps || 0}bps` : "unknown";
       const hubEp = ext.hubEndpoint || "-";
       const hubShort = hubEp.replace(/https?:\/\//, "").replace(/\/.*/, "");
-      const scheme = o.scheme === "statechannel-hub-v1" ? "hub" : o.scheme === "statechannel-direct-v1" ? "direct" : o.scheme;
+      const scheme = o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub" ? "hub" : o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "direct" ? "direct" : o.scheme;
 
       // Check channel readiness
-      const ck = o.scheme === "statechannel-hub-v1" ? `hub:${(ext.hubEndpoint || "").replace(/\/+$/, "")}` : `direct:${(ext.payeeAddress || "").toLowerCase()}`;
+      const ck = o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub" ? `hub:${(ext.hubEndpoint || "").replace(/\/+$/, "")}` : `direct:${(ext.payeeAddress || "").toLowerCase()}`;
       const ch = agent.state?.channels?.[ck];
       let chStatus = "none";
       if (ch) {
@@ -117,7 +117,7 @@ async function main() {
     // Recommendation
     console.log("\n**Recommendation:**");
     const funded = offers.filter((o, i) => {
-      const ext = (o.extensions || {})["statechannel-hub-v1"] || {};
+      const ext = (o.extensions || {})["statechannel"] || {};
       const ck = `hub:${(ext.hubEndpoint || "").replace(/\/+$/, "")}`;
       const ch = agent.state?.channels?.[ck];
       return ch && BigInt(ch.balA || "0") >= BigInt(o.maxAmountRequired || "0");
@@ -141,10 +141,10 @@ async function main() {
       console.log(`No funded channel. Cheapest: offer #${offers.indexOf(cheapest) + 1} (${sym} on ${networkName(cheapest.network)}) at ~$${estimateUsd(cheapest.maxAmountRequired, sym)}`);
     }
 
-    if (ext => offers.some(o => (o.extensions?.["statechannel-hub-v1"]?.stream?.t || 0) > 1)) {
-      const streamOffer = offers.find(o => (o.extensions?.["statechannel-hub-v1"]?.stream?.t || 0) > 1);
+    if (ext => offers.some(o => (o.extensions?.["statechannel"]?.stream?.t || 0) > 1)) {
+      const streamOffer = offers.find(o => (o.extensions?.["statechannel"]?.stream?.t || 0) > 1);
       if (streamOffer) {
-        const t = streamOffer.extensions["statechannel-hub-v1"].stream.t;
+        const t = streamOffer.extensions["statechannel"].stream.t;
         console.log(`Note: streaming endpoint (t=${t}s cadence) — use scp:agent:stream for continuous access.`);
       }
     }

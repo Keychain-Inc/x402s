@@ -559,10 +559,11 @@ function send402(res, pathname, resource, ctx, extra) {
           ? net.stream.t
           : DEFAULT_STREAM_T_SEC;
         offers.push({
-          scheme: "statechannel-hub-v1",
+          scheme: "statechannel",
           network: net.caip2, asset: asset.asset, maxAmountRequired: raw,
           payTo: net.hubName, resource,
-          extensions: { "statechannel-hub-v1": {
+          extensions: { "statechannel": {
+            route: "hub",
             hubName: net.hubName,
             hubEndpoint: net.hubEndpoint,
             mode: "proxy_hold",
@@ -574,10 +575,11 @@ function send402(res, pathname, resource, ctx, extra) {
       }
       if (net.modes.includes("direct")) {
         offers.push({
-          scheme: "statechannel-direct-v1",
+          scheme: "statechannel",
           network: net.caip2, asset: asset.asset, maxAmountRequired: raw,
           payTo: PAYEE_ADDRESS, resource,
-          extensions: { "statechannel-direct-v1": {
+          extensions: { "statechannel": {
+            route: "direct",
             mode: "direct", quoteExpiry: now() + 120,
             invoiceId, payeeAddress: PAYEE_ADDRESS
           }}

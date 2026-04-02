@@ -516,14 +516,15 @@ function buildOfferPayload(req, ctx, opts = {}) {
     pricing: [{ network: NETWORK, asset: "ETH", human: PRICE_ETH, price: amountWei, decimals: 18 }],
     accepts: [
       {
-        scheme: "statechannel-hub-v1",
+        scheme: "statechannel",
         network: `eip155:${chainId}`,
         asset: ASSET_ETH,
         maxAmountRequired: amountWei,
         payTo: HUB_NAME,
         resource,
         extensions: {
-          "statechannel-hub-v1": {
+          "statechannel": {
+            route: "hub",
             hubName: HUB_NAME,
             hubEndpoint: HUB_ENDPOINT,
             mode: "proxy_hold",
@@ -555,7 +556,7 @@ async function validateHubPayment(payment, ctx) {
     return { ok: true };
   }
 
-  if (payment.scheme !== "statechannel-hub-v1") {
+  if (payment.scheme !== "statechannel") {
     return { ok: false, error: "unsupported scheme" };
   }
   const ticket = payment.ticket;

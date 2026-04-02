@@ -55,7 +55,7 @@ async function main() {
       console.log("  unexpected:", offer.statusCode);
       continue;
     }
-    const ext = offer.body.accepts[0].extensions["statechannel-hub-v1"];
+    const ext = offer.body.accepts[0].extensions["statechannel"];
     const invoiceId = ext.invoiceId;
     const paymentId = randomId("pay");
     const amount = offer.body.price;
@@ -103,7 +103,7 @@ async function main() {
 
     // 5. Pay for weather
     const paymentPayload = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       paymentId,
       invoiceId,
       ticket,

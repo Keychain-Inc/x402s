@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "required": [
     "scheme",
+    "route",
     "paymentId",
     "invoiceId",
     "ticket",
@@ -14,7 +15,11 @@
   "properties": {
     "scheme": {
       "type": "string",
-      "const": "statechannel-hub-v1"
+      "const": "statechannel"
+    },
+    "route": {
+      "type": "string",
+      "enum": ["hub", "direct"]
     },
     "paymentId": { "type": "string", "minLength": 6, "maxLength": 128 },
     "invoiceId": { "type": "string", "minLength": 6, "maxLength": 128 },

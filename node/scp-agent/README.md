@@ -1,6 +1,6 @@
 # SCP Agent Client
 
-`ScpAgentClient` is a reusable agent-side payment client for `statechannel-hub-v1`.
+`ScpAgentClient` is a reusable agent-side payment client for `statechannel` (hub route).
 
 ## API
 
@@ -44,4 +44,4 @@ npm run scp:agent:stream -- <url> --route hub
 
 This keeps a live paid connection by repeating paid calls on cadence. For hub offers, cadence is read from:
 
-`accepts[].extensions["statechannel-hub-v1"].stream.t` (fallback `5s`).
+`accepts[].extensions["statechannel"].stream.t` (fallback `5s`).

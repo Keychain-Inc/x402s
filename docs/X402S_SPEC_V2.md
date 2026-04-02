@@ -53,8 +53,8 @@ x402s is a state-channel-based payment protocol for HTTP `402 Payment Required` 
 
 The protocol defines two routing modes:
 
-- **Hub-routed** (`statechannel-hub-v1`): Agent opens one channel with a hub (e.g. `pay.eth`) and pays many payees through that single channel.
-- **Direct** (`statechannel-direct-v1`): Agent opens a channel directly with each payee, with no intermediary.
+- **Hub-routed** (`statechannel` (hub route)): Agent opens one channel with a hub (e.g. `pay.eth`) and pays many payees through that single channel.
+- **Direct** (`statechannel` (direct route)): Agent opens a channel directly with each payee, with no intermediary.
 
 x402s is compatible with the broader x402 open standard for internet-native payments, extending it with an off-chain state channel layer for throughput and cost efficiency.
 
@@ -235,8 +235,8 @@ Payees MUST advertise one or more SCP schemes in their `402` response body:
 
 | Scheme | Route | Description |
 |--------|-------|-------------|
-| `statechannel-hub-v1` | Hub-routed | Payment goes `A → H → B` |
-| `statechannel-direct-v1` | Direct | Payment goes `A → B` directly |
+| `statechannel` (hub route) | Hub-routed | Payment goes `A → H → B` |
+| `statechannel` (direct route) | Direct | Payment goes `A → B` directly |
 
 ### 11.1 Example 402 Response Body
 
@@ -244,14 +244,15 @@ Payees MUST advertise one or more SCP schemes in their `402` response body:
 {
   "accepts": [
     {
-      "scheme": "statechannel-hub-v1",
+      "scheme": "statechannel",
       "network": "eip155:8453",
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "maxAmountRequired": "1000000",
       "payTo": "pay.eth",
       "resource": "https://payee.example/v1/data",
       "extensions": {
-        "statechannel-hub-v1": {
+        "statechannel": {
+          "route": "hub",
           "hubName": "pay.eth",
           "hubEndpoint": "https://pay.eth/.well-known/x402",
           "mode": "proxy_hold",
@@ -261,14 +262,16 @@ Payees MUST advertise one or more SCP schemes in their `402` response body:
       }
     },
     {
-      "scheme": "statechannel-direct-v1",
+      "scheme": "statechannel",
+      "route": "direct",
       "network": "eip155:8453",
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "maxAmountRequired": "1000000",
       "payTo": "0xPayee...",
       "resource": "https://payee.example/v1/data",
       "extensions": {
-        "statechannel-direct-v1": {
+        "statechannel": {
+          "route": "direct",
           "mode": "direct",
           "invoiceId": "01J...",
           "quoteExpiry": 1770000000,
@@ -694,7 +697,7 @@ Hub calls rebalance(state, ch2, 1, agentSig)
 
 ### 15.5 Direct Payment Flow
 
-1. `A → B`: GET resource, receives `402` with `statechannel-direct-v1` offer.
+1. `A → B`: GET resource, receives `402` with `statechannel` (direct route) offer.
 2. `A` constructs a direct channel state update debiting the payment amount.
 3. `A → B`: Retry with `PAYMENT-SIGNATURE` containing the direct payload.
 4. `B` verifies: signature recovery matches `payer`, nonce strictly greater than previous, `balB` delta ≥ payment amount, state not expired.
@@ -736,7 +739,7 @@ Hub calls rebalance(state, ch2, 1, agentSig)
 {
   "hubName": "pay.eth",
   "address": "0xHubAddress...",
-  "schemes": ["statechannel-hub-v1"],
+  "schemes": ["statechannel"],
   "supportedAssets": ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"],
   "signature": {
     "format": "eip712",
@@ -802,7 +805,8 @@ Full OpenAPI 3.1 spec: `docs/openapi/pay-eth-scp-v1.yaml`
 
 ```json
 {
-  "scheme": "statechannel-hub-v1",
+  "scheme": "statechannel",
+  "route": "hub",
   "paymentId": "pay_01JXYZP5A3...",
   "invoiceId": "inv_01JXYZP2F8...",
   "ticket": {
@@ -833,7 +837,8 @@ Full OpenAPI 3.1 spec: `docs/openapi/pay-eth-scp-v1.yaml`
 
 ```json
 {
-  "scheme": "statechannel-direct-v1",
+  "scheme": "statechannel",
+  "route": "direct",
   "paymentId": "pay_...",
   "invoiceId": "inv_...",
   "direct": {
@@ -1044,7 +1049,7 @@ Behavior: Poll for `CloseStarted` → if stale nonce, submit `challenge()` with 
 | **P0 (MVP)** | `proxy_hold` only, one asset/channel, basic fees, coop + unilateral close |
 | **P1** | Multi-asset lanes, refund standardization, payee revocation checks |
 | **P2** | Multi-hub discovery, conditional claim mode (deferred) |
-| **P3 (Direct)** | `statechannel-direct-v1`, direct state verification, route selection |
+| **P3 (Direct)** | `statechannel` (direct route), direct state verification, route selection |
 
 ---
 

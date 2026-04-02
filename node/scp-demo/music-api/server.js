@@ -382,14 +382,15 @@ function buildOfferPayload(req, ctx, options = {}) {
     ],
     accepts: [
       {
-        scheme: "statechannel-hub-v1",
+        scheme: "statechannel",
         network: `eip155:${chainId}`,
         asset: ASSET_ETH,
         maxAmountRequired: amountWei,
         payTo: HUB_NAME,
         resource: resolveResourceUrl(req, routePath),
         extensions: {
-          "statechannel-hub-v1": {
+          "statechannel": {
+            route: "hub",
             hubName: HUB_NAME,
             hubEndpoint: HUB_ENDPOINT,
             mode: "proxy_hold",
@@ -665,7 +666,7 @@ function cWs(){
 
 function hWs(m){
   const t=String(m.type||'');
-  if(t==='offer'||t==='scp.402'){S.off=m.offer||null;const e=(((S.off||{}).accepts||[])[0]||{}).extensions||{};const h=e['statechannel-hub-v1']||{};const s=h.stream||{};if(+s.t>0)S.cad=+s.t;rS();lg(t==='scp.402'?'402 \\u00B7 amt='+(s.amount||AMT_DEF):'offer \\u00B7 amt='+(s.amount||AMT_DEF));return}
+  if(t==='offer'||t==='scp.402'){S.off=m.offer||null;const e=(((S.off||{}).accepts||[])[0]||{}).extensions||{};const h=e['statechannel']||{};const s=h.stream||{};if(+s.t>0)S.cad=+s.t;rS();lg(t==='scp.402'?'402 \\u00B7 amt='+(s.amount||AMT_DEF):'offer \\u00B7 amt='+(s.amount||AMT_DEF));return}
   if(t==='scp.approved'){S.appr=true;S.lp=Date.now();const c=+m.t;if(Number.isInteger(c)&&c>0)S.cad=c;S.ch+=(+(m.amount||AMT_DEF)||0);S.tk++;const st=m.stream||{};const nc=+st.nextCursor;if(Number.isFinite(nc)&&nc>=0){S.cur=Math.floor(nc);S.ns=S.cur}rS();sC();setSt('connected');lg('tick \\u00B7 id='+(m.paymentId||'?')+' cur='+S.cur+'s');const hm=st.hasMore!==false;if(!hm||(S.sel&&S.cur>=S.sel.durationSec)){if(S.auto){const n=nxT();if(n){S.cur=0;S.ns=0;rS();sC();wS('control.start',{track:n.id,cursor:0});lg('done \\u2192 next');return}}wS('control.stop');stopC('track complete')}return}
   if(t==='scp.rejected'){S.appr=false;lg('rejected \\u00B7 '+(m.error||'?'),true);stopC('rejected');return}
   if(t==='stream.start'){if(!S.con)S.con=true;if(!S.pId)stPr();if(!S.wId)stWa();setSt('awaiting payment');goA();lg('stream started');return}

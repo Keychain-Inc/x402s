@@ -134,8 +134,8 @@ describe("SCP Music API", function () {
   it("returns 402 offer with stream metadata for music chunk", async function () {
     const res = await reqJson("GET", `http://${API_HOST}:${API_PORT}/v1/music/chunk?track=neon-sky&cursor=0`);
     expect(res.statusCode).to.eq(402);
-    expect(res.body.accepts[0].scheme).to.eq("statechannel-hub-v1");
-    const ext = res.body.accepts[0].extensions["statechannel-hub-v1"];
+    expect(res.body.accepts[0].scheme).to.eq("statechannel");
+    const ext = res.body.accepts[0].extensions["statechannel"];
     expect(ext.stream.t).to.eq(5);
     expect(ext.stream.amount).to.eq(res.body.accepts[0].maxAmountRequired);
   });
@@ -145,9 +145,9 @@ describe("SCP Music API", function () {
       accept: "application/json"
     });
     expect(res.statusCode).to.eq(402);
-    expect(res.body.accepts[0].scheme).to.eq("statechannel-hub-v1");
+    expect(res.body.accepts[0].scheme).to.eq("statechannel");
     expect(res.body.accepts[0].resource).to.include("/music?track=neon-sky&cursor=0");
-    expect(res.body.accepts[0].extensions["statechannel-hub-v1"].stream.t).to.eq(5);
+    expect(res.body.accepts[0].extensions["statechannel"].stream.t).to.eq(5);
   });
 
   it("returns 402 on /music without explicit track query", async function () {
@@ -155,7 +155,7 @@ describe("SCP Music API", function () {
       accept: "application/json"
     });
     expect(res.statusCode).to.eq(402);
-    expect(res.body.accepts[0].scheme).to.eq("statechannel-hub-v1");
+    expect(res.body.accepts[0].scheme).to.eq("statechannel");
     expect(res.body.accepts[0].resource).to.include("/music?track=neon-sky&cursor=0");
   });
 
@@ -164,7 +164,7 @@ describe("SCP Music API", function () {
     expect(first.statusCode).to.eq(402);
 
     const offer = first.body.accepts[0];
-    const ext = offer.extensions["statechannel-hub-v1"];
+    const ext = offer.extensions["statechannel"];
     const invoiceId = ext.invoiceId;
     const paymentId = `pay_${Date.now()}`;
     const amount = offer.maxAmountRequired;
@@ -185,7 +185,7 @@ describe("SCP Music API", function () {
     const sig = await signTicketDraft(draft, hubWallet);
     issuedByPaymentId.set(paymentId, draft.ticketId);
     const paymentHeader = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       invoiceId,
       paymentId,
       ticket: { ...draft, sig }
@@ -212,7 +212,7 @@ describe("SCP Music API", function () {
 
     ws.send(JSON.stringify({ type: "offer.get", track: "neon-sky", cursor: 0 }));
     const offerEvent = await waitWsEvent(messages, "offer");
-    const stream = offerEvent.offer.accepts[0].extensions["statechannel-hub-v1"].stream;
+    const stream = offerEvent.offer.accepts[0].extensions["statechannel"].stream;
     expect(stream.t).to.eq(5);
 
     ws.send(JSON.stringify({ type: "scp.approve", amount: stream.amount, t: stream.t }));

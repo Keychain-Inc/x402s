@@ -137,8 +137,8 @@ describe("SCP Deep Stack", function () {
   async function makeValidPaymentBundle(paymentId) {
     const first = await reqJson("GET", PAYEE_URL);
     expect(first.statusCode).to.eq(402);
-    const offer = first.body.accepts.find((o) => o.scheme === "statechannel-hub-v1");
-    const ext = offer.extensions["statechannel-hub-v1"];
+    const offer = first.body.accepts.find((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub");
+    const ext = offer.extensions["statechannel"];
     const invoiceId = ext.invoiceId;
 
     const opened = await openRealHubChannel();
@@ -179,7 +179,7 @@ describe("SCP Deep Stack", function () {
     expect(issue.statusCode).to.eq(200);
 
     const paymentPayload = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       paymentId,
       invoiceId,
       ticket: (() => {
@@ -366,8 +366,8 @@ describe("SCP Deep Stack", function () {
       await primeAgentHubChannel(agent);
       const first = await reqJson("GET", PAYEE_URL);
       expect(first.statusCode).to.eq(402);
-      const offer = first.body.accepts.find((o) => o.scheme === "statechannel-hub-v1");
-      const ext = offer.extensions["statechannel-hub-v1"];
+      const offer = first.body.accepts.find((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub");
+      const ext = offer.extensions["statechannel"];
 
       const channel = agent.channelForHub(HUB_URL);
       const before = { nonce: channel.nonce, balA: channel.balA, balB: channel.balB };
@@ -421,8 +421,8 @@ describe("SCP Deep Stack", function () {
       await primeAgentHubChannel(agent);
       const first = await reqJson("GET", PAYEE_URL);
       expect(first.statusCode).to.eq(402);
-      const offer = first.body.accepts.find((o) => o.scheme === "statechannel-hub-v1");
-      const ext = offer.extensions["statechannel-hub-v1"];
+      const offer = first.body.accepts.find((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub");
+      const ext = offer.extensions["statechannel"];
 
       const channel = agent.channelForHub(HUB_URL);
       const before = { nonce: channel.nonce, balA: channel.balA, balB: channel.balB };
@@ -535,10 +535,10 @@ describe("SCP Deep Stack", function () {
   it("payee rejects direct payment when invoice amount mismatches", async function () {
     const first = await reqJson("GET", PAYEE_URL);
     expect(first.statusCode).to.eq(402);
-    const offer = first.body.accepts.find((o) => o.scheme === "statechannel-direct-v1");
+    const offer = first.body.accepts.find((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "direct");
     expect(offer).to.not.eq(undefined);
 
-    const ext = offer.extensions["statechannel-direct-v1"];
+    const ext = offer.extensions["statechannel"];
     const invoiceId = ext.invoiceId;
     const paymentId = `pay_direct_under_${Date.now()}`;
     const directAmount = "1";
@@ -554,7 +554,7 @@ describe("SCP Deep Stack", function () {
     const sigA = await signChannelState(state, testPayer);
 
     const paymentPayload = {
-      scheme: "statechannel-direct-v1",
+      scheme: "statechannel",
       paymentId,
       invoiceId,
       direct: {
@@ -606,7 +606,7 @@ describe("SCP Deep Stack", function () {
     const first = await reqJson("GET", PAYEE_URL);
     expect(first.statusCode).to.eq(402);
     const offer = first.body.accepts[0];
-    const ext = offer.extensions["statechannel-hub-v1"];
+    const ext = offer.extensions["statechannel"];
     const channelId = ethers.utils.hexlify(crypto.randomBytes(32));
     const quoteReq = {
       invoiceId: ext.invoiceId,
@@ -643,8 +643,8 @@ describe("SCP Deep Stack", function () {
   it("hub rejects ticket issue when quote payload is tampered", async function () {
     const first = await reqJson("GET", PAYEE_URL);
     expect(first.statusCode).to.eq(402);
-    const offer = first.body.accepts.find((o) => o.scheme === "statechannel-hub-v1");
-    const ext = offer.extensions["statechannel-hub-v1"];
+    const offer = first.body.accepts.find((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub");
+    const ext = offer.extensions["statechannel"];
     const channelId = ethers.utils.hexlify(crypto.randomBytes(32));
     const contextHash = "0x5f4cf45e4c1533216f69fcf4f6864db7a0b1f14f9788c61f2604961e59fb745f";
     const quoteRes = await reqJson("POST", `${HUB_URL}/v1/tickets/quote`, {
@@ -701,8 +701,8 @@ describe("SCP Deep Stack", function () {
     expect(res.statusCode).to.eq(200);
     expect(res.body.accepts).to.be.an("array");
     expect(res.body.accepts.length).to.be.greaterThan(0);
-    const hub = res.body.accepts.find((o) => o.scheme === "statechannel-hub-v1");
-    const direct = res.body.accepts.find((o) => o.scheme === "statechannel-direct-v1");
+    const hub = res.body.accepts.find((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub");
+    const direct = res.body.accepts.find((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "direct");
     expect(hub).to.not.eq(undefined);
     expect(direct).to.not.eq(undefined);
     expect(hub.maxAmountRequired).to.be.a("string");
@@ -779,16 +779,16 @@ describe("SCP Deep Stack", function () {
       // 2 networks × 2 schemes (hub + direct) = 4 offers
       expect(res402.body.accepts.length).to.eq(4);
 
-      const hubOffers = res402.body.accepts.filter((o) => o.scheme === "statechannel-hub-v1");
-      const directOffers = res402.body.accepts.filter((o) => o.scheme === "statechannel-direct-v1");
+      const hubOffers = res402.body.accepts.filter((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub");
+      const directOffers = res402.body.accepts.filter((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "direct");
       expect(hubOffers.length).to.eq(2);
       expect(directOffers.length).to.eq(2);
 
       const networks = hubOffers.map((o) => o.network).sort();
       expect(networks).to.deep.eq(["eip155:11155111", "eip155:8453"]);
 
-      expect(hubOffers[0].extensions["statechannel-hub-v1"].hubEndpoint).to.contain("hub-base");
-      expect(hubOffers[1].extensions["statechannel-hub-v1"].hubEndpoint).to.contain("hub-sepolia");
+      expect(hubOffers[0].extensions["statechannel"].hubEndpoint).to.contain("hub-base");
+      expect(hubOffers[1].extensions["statechannel"].hubEndpoint).to.contain("hub-sepolia");
 
       // /pay lists same offers
       const payRes = await reqJson("GET", `http://${PAYEE_HOST}:${MULTI2_PORT}/pay`);
@@ -821,17 +821,17 @@ describe("SCP Deep Stack", function () {
       expect(res.body.accepts.length).to.eq(4);
 
       const hubUsdc = res.body.accepts.find(
-        (o) => o.scheme === "statechannel-hub-v1" && o.asset === "0xUSDC"
+        (o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub" && o.asset === "0xUSDC"
       );
       const hubWeth = res.body.accepts.find(
-        (o) => o.scheme === "statechannel-hub-v1" && o.asset === "0xWETH"
+        (o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub" && o.asset === "0xWETH"
       );
       expect(hubUsdc.maxAmountRequired).to.eq("1000000");
       expect(hubWeth.maxAmountRequired).to.eq("500000000000000");
 
       // each offer has its own invoiceId
-      const usdcInv = hubUsdc.extensions["statechannel-hub-v1"].invoiceId;
-      const wethInv = hubWeth.extensions["statechannel-hub-v1"].invoiceId;
+      const usdcInv = hubUsdc.extensions["statechannel"].invoiceId;
+      const wethInv = hubWeth.extensions["statechannel"].invoiceId;
       expect(usdcInv).to.not.eq(wethInv);
     } finally {
       await new Promise((r) => multiPayee.close(r));
@@ -846,10 +846,10 @@ describe("SCP Deep Stack", function () {
       persistEnabled: false
     });
     const offers = [
-      { scheme: "statechannel-hub-v1", network: "eip155:8453", asset: "0xUSDC", maxAmountRequired: "1000000" },
-      { scheme: "statechannel-direct-v1", network: "eip155:8453", asset: "0xUSDC", maxAmountRequired: "1000000" },
-      { scheme: "statechannel-hub-v1", network: "eip155:8453", asset: "0xWETH", maxAmountRequired: "500000000000000" },
-      { scheme: "statechannel-direct-v1", network: "eip155:8453", asset: "0xWETH", maxAmountRequired: "500000000000000" }
+      { scheme: "statechannel", network: "eip155:8453", asset: "0xUSDC", maxAmountRequired: "1000000" },
+      { scheme: "statechannel", network: "eip155:8453", asset: "0xUSDC", maxAmountRequired: "1000000" },
+      { scheme: "statechannel", network: "eip155:8453", asset: "0xWETH", maxAmountRequired: "500000000000000" },
+      { scheme: "statechannel", network: "eip155:8453", asset: "0xWETH", maxAmountRequired: "500000000000000" }
     ];
 
     // no filter — picks first hub
@@ -864,7 +864,7 @@ describe("SCP Deep Stack", function () {
     // filter by WETH direct
     const wethDirect = agent.chooseOffer(offers, "direct", { asset: "0xWETH" });
     expect(wethDirect.asset).to.eq("0xWETH");
-    expect(wethDirect.scheme).to.eq("statechannel-direct-v1");
+    expect(wethDirect.scheme).to.eq("statechannel");
 
     // filter by unknown asset — undefined
     const none = agent.chooseOffer(offers, "hub", { asset: "0xDAI" });
@@ -889,22 +889,24 @@ describe("SCP Deep Stack", function () {
     };
     const offers = [
       {
-        scheme: "statechannel-hub-v1",
+        scheme: "statechannel",
         network: "eip155:8453",
         asset: "0xUSDC",
         maxAmountRequired: "1000000",
-        extensions: { "statechannel-hub-v1": { hubEndpoint: "http://127.0.0.1:4021" } }
+        extensions: { "statechannel": { hubEndpoint: "http://127.0.0.1:4021" } }
+          route: "hub",
       },
       {
-        scheme: "statechannel-direct-v1",
+        scheme: "statechannel",
         network: "eip155:8453",
         asset: "0xUSDC",
         maxAmountRequired: "1000000",
-        extensions: { "statechannel-direct-v1": { payeeAddress: payee } }
+        extensions: { "statechannel": { payeeAddress: payee } }
+          route: "direct",
       }
     ];
     const selected = agent.chooseOffer(offers, "auto");
-    expect(selected.scheme).to.eq("statechannel-direct-v1");
+    expect(selected.scheme).to.eq("statechannel");
     agent.close();
   });
 
@@ -959,8 +961,8 @@ describe("SCP Deep Stack", function () {
   it("hub enforces +1 nonce and quote debit delta on issue", async function () {
     const first = await reqJson("GET", PAYEE_URL);
     expect(first.statusCode).to.eq(402);
-    const offer = first.body.accepts.find((o) => o.scheme === "statechannel-hub-v1");
-    const ext = offer.extensions["statechannel-hub-v1"];
+    const offer = first.body.accepts.find((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub");
+    const ext = offer.extensions["statechannel"];
     const opened = await openRealHubChannel();
     const channelId = opened.channelId;
     const startingTotal = opened.totalBalance;
@@ -993,8 +995,8 @@ describe("SCP Deep Stack", function () {
     expect(i1.statusCode).to.eq(200);
 
     const q2 = await reqJson("GET", PAYEE_URL);
-    const offer2 = q2.body.accepts.find((o) => o.scheme === "statechannel-hub-v1");
-    const ext2 = offer2.extensions["statechannel-hub-v1"];
+    const offer2 = q2.body.accepts.find((o) => o.scheme === "statechannel" && ((o.extensions || {}).statechannel || {}).route === "hub");
+    const ext2 = offer2.extensions["statechannel"];
     const q2res = await reqJson("POST", `${HUB_URL}/v1/tickets/quote`, {
       invoiceId: ext2.invoiceId,
       paymentId: `pay_nonce_2_${Date.now()}`,

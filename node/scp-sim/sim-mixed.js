@@ -157,7 +157,7 @@ async function run() {
       throw new Error(`expected 402, got ${first.statusCode}`);
     }
     const offer = first.body.accepts[0];
-    const ext = offer.extensions["statechannel-hub-v1"];
+    const ext = offer.extensions["statechannel"];
     const paymentId = `pay_${client.id}_${payeeNode.id}_r${round}_${Date.now()}`;
     const contextHash = ethers.utils.keccak256(
       ethers.utils.toUtf8Bytes(
@@ -209,7 +209,7 @@ async function run() {
     const ticket = { ...issue.body };
     delete ticket.channelAck;
     const paymentPayload = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       paymentId,
       invoiceId: ext.invoiceId,
       ticket,

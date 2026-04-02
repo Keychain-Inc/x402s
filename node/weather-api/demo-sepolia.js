@@ -165,7 +165,7 @@ async function main() {
   console.log("\n== 4. A → Hub → B payments ==");
   for (const city of cities) {
     const offer = await httpReq("GET", `${wxUrl}/weather?city=${encodeURIComponent(city)}`);
-    const ext = offer.body.accepts[0].extensions["statechannel-hub-v1"];
+    const ext = offer.body.accepts[0].extensions["statechannel"];
     const invoiceId = ext.invoiceId;
     const paymentId = randomId("pay");
     const amount = offer.body.price;
@@ -202,7 +202,7 @@ async function main() {
 
     const wx = await httpReq("GET", `${wxUrl}/weather?city=${encodeURIComponent(city)}`, null, {
       "payment-signature": JSON.stringify({
-        scheme: "statechannel-hub-v1", paymentId, invoiceId, ticket,
+        scheme: "statechannel", paymentId, invoiceId, ticket,
         channelProof: { channelId: channelIdAH, stateNonce: nonce, sigA }
       })
     });

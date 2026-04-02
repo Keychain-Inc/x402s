@@ -290,14 +290,15 @@ app.get("/v1/data", async (req, res) => {
     return res.status(402).json({
       accepts: [
         {
-          scheme: "statechannel-hub-v1",
+          scheme: "statechannel",
           network: "eip155:8453",
           asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
           maxAmountRequired: "1000000",
           payTo: "pay.eth",
           resource: "https://yourapi.com/v1/data",
           extensions: {
-            "statechannel-hub-v1": {
+            "statechannel": {
+              "route": "hub",
               hubName: "pay.eth",
               hubEndpoint: "http://159.223.150.70/hub/base",
               mode: "proxy_hold",
@@ -592,7 +593,7 @@ Stream payments let an agent pay continuously for ongoing access — unlocking c
    ```json
    {
      "extensions": {
-       "statechannel-hub-v1": {
+       "statechannel": {
          "stream": { "amount": "100000000000", "t": 5 }
        }
      }
@@ -663,12 +664,12 @@ In your `offers.json` or offer builder, add the stream block:
       "path": "/v1/feed",
       "accepts": [
         {
-          "scheme": "statechannel-hub-v1",
+          "scheme": "statechannel",
           "network": "eip155:8453",
           "asset": "0x0000000000000000000000000000000000000000",
           "maxAmountRequired": "100000000000",
           "extensions": {
-            "statechannel-hub-v1": {
+            "statechannel": {
               "stream": { "amount": "100000000000", "t": 5 }
             }
           }

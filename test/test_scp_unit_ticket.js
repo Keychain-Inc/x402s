@@ -70,7 +70,7 @@ describe("SCP Ticket Unit", function () {
     const state = sampleState();
     const sigA = await signChannelState(state, payerWallet);
     const payload = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       paymentId: draft.paymentId,
       invoiceId: draft.invoiceId,
       ticket: { ...draft, sig },
@@ -97,7 +97,7 @@ describe("SCP Ticket Unit", function () {
     const state = sampleState();
     const sigA = await signChannelState(state, payerWallet);
     const payload = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       paymentId: draft.paymentId,
       invoiceId: draft.invoiceId,
       ticket: { ...draft, sig },
@@ -128,7 +128,7 @@ describe("SCP Ticket Unit", function () {
     const state = sampleState();
     const sigA = await signChannelState(state, payerWallet, signingOpts);
     const payload = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       paymentId: draft.paymentId,
       invoiceId: draft.invoiceId,
       ticket: { ...draft, sig },
@@ -163,7 +163,7 @@ describe("SCP Ticket Unit", function () {
     const state = sampleState({ balA: "5000", balB: "1000", contextHash });
     const sigA = await signChannelState(state, payerWallet);
     const payload = {
-      scheme: "statechannel-direct-v1",
+      scheme: "statechannel",
       invoiceId: "inv_dir_001",
       paymentId: "pay_dir_001",
       direct: {
@@ -214,7 +214,7 @@ describe("SCP Ticket Unit", function () {
     const state = sampleState({ balA: "5000", balB: "1000", contextHash });
     const sigA = await signChannelState(state, payerWallet);
     const header = JSON.stringify({
-      scheme: "statechannel-direct-v1",
+      scheme: "statechannel",
       invoiceId,
       paymentId,
       direct: {
@@ -259,7 +259,7 @@ describe("SCP Ticket Unit", function () {
     const state = sampleState({ balA: "5000", balB: "1000", contextHash });
     const sigA = await signChannelState(state, payerWallet);
     const header = JSON.stringify({
-      scheme: "statechannel-direct-v1",
+      scheme: "statechannel",
       invoiceId,
       paymentId,
       direct: {
@@ -297,7 +297,7 @@ describe("SCP Ticket Unit", function () {
     });
     const sig = await signTicketDraft(draft, hubWallet);
     const payload = {
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       paymentId: draft.paymentId,
       invoiceId: draft.invoiceId,
       ticket: { ...draft, sig }
@@ -336,7 +336,7 @@ describe("SCP Ticket Unit", function () {
     const sig = await signTicketDraft(draft, hubWallet);
     const out = await verifyPaymentFull(
       JSON.stringify({
-        scheme: "statechannel-hub-v1",
+        scheme: "statechannel",
         paymentId: draft.paymentId,
         invoiceId: draft.invoiceId,
         ticket: { ...draft, sig }
@@ -359,7 +359,7 @@ describe("SCP Ticket Unit", function () {
     });
     const sig = await signTicketDraft(draft, hubWallet);
     const header = JSON.stringify({
-      scheme: "statechannel-hub-v1",
+      scheme: "statechannel",
       paymentId: draft.paymentId,
       invoiceId: draft.invoiceId,
       ticket: { ...draft, sig }

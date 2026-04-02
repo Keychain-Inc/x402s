@@ -28,13 +28,13 @@ Agent                    Payee                    Hub
 {
   "accepts": [
     {
-      "scheme": "statechannel-hub-v1",
+      "scheme": "statechannel",
       "network": "eip155:8453",
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "maxAmountRequired": "10000",
       "resource": "https://api.example.com/v1/data",
       "extensions": {
-        "statechannel-hub-v1": {
+        "statechannel": {
           "hubName": "pay.eth",
           "hubEndpoint": "https://pogchamp.tv/hub/base",
           "payeeAddress": "0x...",

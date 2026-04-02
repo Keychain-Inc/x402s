@@ -180,7 +180,7 @@ function verifyPayment(header, expect) {
 function verifyDirectPayment(header, expect, state) {
   const payload = parsePaymentHeader(header);
   if (!payload) return { ok: false, error: "missing or invalid header" };
-  if (payload.scheme !== "statechannel-direct-v1") return { ok: false, error: "wrong scheme" };
+  if (payload.scheme !== "statechannel") return { ok: false, error: "wrong scheme" };
   const signingOpts = expect && expect.signingOpts ? expect.signingOpts : undefined;
 
   const dp = payload.direct;
@@ -316,7 +316,7 @@ async function verifyPaymentFull(header, options) {
   if (!payload) return { ok: false, error: "missing or invalid header" };
 
   // Direct route
-  if (payload.scheme === "statechannel-direct-v1") {
+  if (payload.scheme === "statechannel" && payload.route === "direct") {
     const invoiceCheck = resolveInvoiceRecord(options.invoiceStore, payload.invoiceId, payload.direct || null);
     if (!invoiceCheck.ok) {
       return { ok: false, error: "unknown invoice" };
@@ -344,7 +344,7 @@ async function verifyPaymentFull(header, options) {
   }
 
   // Hub route — ticket + channel proof
-  if (payload.scheme && payload.scheme !== "statechannel-hub-v1") {
+  if (payload.scheme && payload.scheme !== "statechannel") {
     return { ok: false, error: "wrong scheme" };
   }
   let hub = options.hub;
@@ -480,7 +480,7 @@ function createVerifier({
   const verify = async (header, invoiceStore) => {
     // For direct payments, no hub needed
     const payload = parsePaymentHeader(header);
-    if (payload && payload.scheme === "statechannel-direct-v1") {
+    if (payload && payload.scheme === "statechannel" && payload.route === "direct") {
       return verifyPaymentFull(header, {
         payee,
         invoiceStore,
