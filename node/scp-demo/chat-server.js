@@ -17,7 +17,7 @@ const NETWORK = toCaip2(CHAT_NETWORK) || "eip155:8453";
 const CHAIN_ID = Number(NETWORK.split(":")[1]);
 const EXTRA_NETWORKS = (process.env.CHAT_EXTRA_NETWORKS || "sepolia").split(",").map(s => s.trim()).filter(Boolean);
 const PORT = Number(process.env.CHAT_PORT || 4044);
-const HUB_URL = process.env.HUB_URL || resolveHubEndpointForNetwork(NETWORK);
+const HUB_URL = process.env.HUB_URL || "https://pogchamp.tv/hub/base";
 const PAYEE_KEY = process.env.PAYEE_PRIVATE_KEY;
 if (!PAYEE_KEY) { console.error("FATAL: PAYEE_PRIVATE_KEY required"); process.exit(1); }
 const payeeWallet = new ethers.Wallet(PAYEE_KEY);
@@ -26,7 +26,7 @@ const PAYEE_ADDR = payeeWallet.address;
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 const CONTRACT_ADDR = process.env.CONTRACT_ADDRESS || resolveContract(CHAIN_ID);
 const PUBLIC_URL = process.env.PUBLIC_URL || "";
-const PUBLIC_HUB = process.env.PUBLIC_HUB || HUB_URL;
+const PUBLIC_HUB = process.env.PUBLIC_HUB || "https://pogchamp.tv/hub/base";
 const SCP_PAY_AUTO_CONFIRM = process.env.SCP_PAY_AUTO_CONFIRM !== "0";
 
 // --- Offer config: OFFERS_FILE > env > defaults ---
@@ -138,7 +138,7 @@ function makeOffers(path, req) {
     }
   }));
   // Add extra network offers (e.g. Sepolia testnet)
-  const pubBase = (process.env.PUBLIC_HUB_BASE_URL || "https://pogchamp.tv").replace(/\/+$/, "");
+  const pubBase = "https://pogchamp.tv";
   for (const net of EXTRA_NETWORKS) {
     const caip = toCaip2(net);
     if (!caip || caip === NETWORK) continue;
@@ -185,27 +185,30 @@ function getPaymentHeader(req) {
   return req.headers["payment-signature"] || req.headers["x-scp-signature"] || null;
 }
 
-// Setup verifier
+// Setup verifiers per network
 const consumed = new Map();
 const payAcks = new Map();
-const verify = createVerifier({
-  payee: PAYEE_ADDR,
-  hubUrl: HUB_URL,
-  hubs: [HUB_URL],
-  confirmHub: true,
-  seenPayments: consumed,
-  chainId: CHAIN_ID,
-  contractAddress: CONTRACT_ADDR
-});
-const verifyPay = createVerifier({
-  payee: PAYEE_ADDR,
-  hubUrl: HUB_URL,
-  hubs: [HUB_URL],
-  confirmHub: true,
-  seenPayments: payAcks,
-  chainId: CHAIN_ID,
-  contractAddress: CONTRACT_ADDR
-});
+const verifiers = new Map();
+
+function getVerifier(network, isPay) {
+  const caip = toCaip2(network) || NETWORK;
+  const chainId = Number(caip.split(":")[1]);
+  const key = `${caip}:${isPay}`;
+  if (!verifiers.has(key)) {
+    const hubUrl1 = resolveHubEndpointForNetwork(caip, { baseUrl: "https://pogchamp.tv" });
+    const hubUrl2 = resolveHubEndpointForNetwork(caip, { baseUrl: "https://statechannel.org/heyeth" });
+    const hubUrl3 = resolveHubEndpointForNetwork(caip, { baseUrl: "https://statechannel.org" });
+    verifiers.set(key, createVerifier({
+      payee: PAYEE_ADDR,
+      hubs: [hubUrl1, hubUrl2, hubUrl3],
+      confirmHub: true,
+      seenPayments: isPay ? payAcks : consumed,
+      chainId,
+      contractAddress: resolveContract(chainId)
+    }));
+  }
+  return verifiers.get(key);
+}
 
 // --- Chat HTML UI ---
 function serveChatHTML(req, res) {
@@ -626,13 +629,14 @@ const server = http.createServer(async (req, res) => {
         const inv = invoices.get(invoiceId);
         return !!inv;
       };
+      const net = payment && payment.network ? payment.network : (payment && payment.ticket && payment.ticket.asset === "0x0000000000000000000000000000000000000000" && payment.ticket.amount === "100000000000" ? "eip155:11155111" : NETWORK);
       try {
-        result = await verify(rawHeader, invoiceLookup);
+        result = await getVerifier(net, false)(rawHeader, invoiceLookup);
       } catch (e) {
         return sendJson(res, 402, { error: "verification failed: " + e.message });
       }
       if (result.replayed) return sendJson(res, 200, result.response);
-      if (!result.ok) return sendJson(res, 402, { error: result.error, retryable: false });
+      if (!result.ok) { console.error("Payment failed:", result.error, "payment:", payment); return sendJson(res, 402, { error: result.error, retryable: false }); }
     }
 
     // Payment verified — store message
@@ -673,13 +677,14 @@ const server = http.createServer(async (req, res) => {
         const inv = invoices.get(invoiceId);
         return !!inv;
       };
+      const net = payment && payment.network ? payment.network : (payment && payment.ticket && payment.ticket.asset === "0x0000000000000000000000000000000000000000" && payment.ticket.amount === "100000000000" ? "eip155:11155111" : NETWORK);
       try {
-        result = await verifyPay(rawHeader, invoiceLookup);
+        result = await getVerifier(net, true)(rawHeader, invoiceLookup);
       } catch (e) {
         return sendJson(res, 402, { error: "verification failed: " + e.message });
       }
       if (result.replayed) return sendJson(res, 200, result.response);
-      if (!result.ok) return sendJson(res, 402, { error: result.error, retryable: false });
+      if (!result.ok) { console.error("Payment failed:", result.error, "payment:", payment); return sendJson(res, 402, { error: result.error, retryable: false }); }
     }
 
     const response = {

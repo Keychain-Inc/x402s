@@ -160,7 +160,7 @@ function verifyPayment(header, expect) {
       }
       const expectedHash = hashChannelState(cp.channelState, signingOpts);
       if (String(expectedHash).toLowerCase() !== String(cp.stateHash).toLowerCase()) {
-        return { ok: false, error: "state hash mismatch", signer };
+        return { ok: false, error: "state hash mismatch: expected " + expectedHash + " got " + cp.stateHash + " with opts " + JSON.stringify(signingOpts) + " and payload " + JSON.stringify(payload), signer };
       }
       try {
         recoverChannelStateSigner(cp.channelState, cp.sigA, signingOpts);
@@ -374,7 +374,7 @@ async function verifyPaymentFull(header, options) {
   // Hub confirmation
   if (options.hubUrl && options.httpClient) {
     const status = await options.httpClient.request("GET", `${options.hubUrl}/v1/payments/${encodeURIComponent(result.paymentId)}`);
-    if (status.statusCode !== 200) return { ok: false, error: "hub payment unknown" };
+    if (status.statusCode !== 200) return { ok: false, error: "hub payment unknown: " + status.statusCode + " " + JSON.stringify(status.body) + " url: " + options.hubUrl + " paymentId: " + result.paymentId };
     if (status.body.status !== "issued") return { ok: false, error: "hub payment not issued" };
     if (status.body.ticketId !== result.ticket.ticketId) return { ok: false, error: "ticket id mismatch at hub" };
   }
