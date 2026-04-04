@@ -4,7 +4,14 @@ const crypto = require("crypto");
 const { ethers } = require("ethers");
 const { hashChannelState, signChannelState, recoverChannelStateSigner } = require("../scp-hub/state-signing");
 const { HttpJsonClient } = require("../scp-common/http-client");
-const { resolveAsset, resolveNetwork, resolveHubEndpointForNetwork, toCaip2, ASSETS } = require("../scp-common/networks");
+const {
+  resolveAsset,
+  resolveNetwork,
+  resolveHubEndpointForNetwork,
+  resolveContract,
+  toCaip2,
+  ASSETS
+} = require("../scp-common/networks");
 
 const ZERO32 = "0x0000000000000000000000000000000000000000000000000000000000000000";
 const ZERO_ADDRESS_LOWER = ethers.constants.AddressZero.toLowerCase();
@@ -859,7 +866,42 @@ class ScpAgentClient {
     throw new Error(`No channel open with hub at ${hubEndpoint}. Open one with: npm run scp:channel:open -- <hubAddress> <deposit>`);
   }
 
+  /**
+   * EIP-712 domain for ChannelState must match the hub (CHAIN_ID + SCP contract).
+   * Relying on global env in state-signing.js breaks when CONTRACT_ADDRESS / CHAIN_ID are unset.
+   */
+  async resolveHubEip712Opts(hubEndpoint, quoteReq = {}) {
+    let chainId =
+      quoteReq.chainId != null && Number.isInteger(Number(quoteReq.chainId)) && Number(quoteReq.chainId) > 0
+        ? Number(quoteReq.chainId)
+        : null;
+    if (!chainId) {
+      const fromNet = parseChainId(quoteReq.network);
+      if (fromNet) chainId = fromNet;
+    }
+    if (!chainId) {
+      const hubInfo = await this.queryHubInfo(hubEndpoint).catch(() => null);
+      if (hubInfo && hubInfo.chainId != null) {
+        const parsed = Number(hubInfo.chainId);
+        if (Number.isInteger(parsed) && parsed > 0) chainId = parsed;
+      }
+    }
+    if (!chainId) {
+      const envNet = process.env.NETWORK || process.env.CHAIN_ID;
+      const fromEnv = parseChainId(envNet) || (envNet && /^\d+$/.test(String(envNet).trim()) ? Number(envNet) : null);
+      if (fromEnv) chainId = fromEnv;
+    }
+    if (!chainId) {
+      throw new Error(
+        "Cannot resolve EIP-712 chainId for hub ticket: pass quoteReq.network (e.g. eip155:8453) or set NETWORK / CHAIN_ID"
+      );
+    }
+    const contractAddress = resolveContract(chainId);
+    return { chainId, contractAddress };
+  }
+
   async quoteAndIssueHubTicket(hubEndpoint, contextHash, quoteReq) {
+    const eip712Opts = await this.resolveHubEip712Opts(hubEndpoint, quoteReq);
     const quote = await this.http.request("POST", `${hubEndpoint}/v1/tickets/quote`, quoteReq);
     if (quote.statusCode !== 200) {
       throw new Error(`quote failed: ${quote.statusCode} ${JSON.stringify(quote.body)}`);
@@ -867,7 +909,7 @@ class ScpAgentClient {
 
     const channelKey = `hub:${hubEndpoint}`;
     const state = this.nextChannelState(channelKey, quote.body.totalDebit, contextHash);
-    const sigA = await signChannelState(state, this.wallet);
+    const sigA = await signChannelState(state, this.wallet, eip712Opts);
     const issueReq = { quote: quote.body, channelState: state, sigA };
     const issued = await this.http.request("POST", `${hubEndpoint}/v1/tickets/issue`, issueReq);
     if (issued.statusCode !== 200) {
@@ -885,13 +927,13 @@ class ScpAgentClient {
         `issue failed: channelAck nonce mismatch (${channelAck.stateNonce} != ${state.stateNonce})`
       );
     }
-    const localStateHash = hashChannelState(state);
+    const localStateHash = hashChannelState(state, eip712Opts);
     if (String(channelAck.stateHash || "").toLowerCase() !== localStateHash.toLowerCase()) {
       throw new Error("issue failed: channelAck stateHash mismatch");
     }
     let recoveredHub;
     try {
-      recoveredHub = recoverChannelStateSigner(state, channelAck.sigB);
+      recoveredHub = recoverChannelStateSigner(state, channelAck.sigB, eip712Opts);
     } catch (_e) {
       throw new Error("issue failed: invalid hub signature on channelAck");
     }
@@ -996,7 +1038,8 @@ class ScpAgentClient {
       amount,
       maxFee,
       quoteExpiry: now() + 120,
-      contextHash
+      contextHash,
+      network: offer.network
     };
     const issuedBundle = await this.quoteAndIssueHubTicket(hubEndpoint, contextHash, quoteReq);
 
@@ -1160,7 +1203,8 @@ class ScpAgentClient {
       amount,
       maxFee,
       quoteExpiry: now() + 120,
-      contextHash
+      contextHash,
+      network: options.network || this.networkAllowlist[0]
     };
     const issuedBundle = await this.quoteAndIssueHubTicket(hubEndpoint, contextHash, quoteReq);
     this.persistHubPayment(
