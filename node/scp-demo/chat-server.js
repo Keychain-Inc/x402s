@@ -445,7 +445,7 @@ function sendMessage() {
       type: "x402:config",
       url: payUrl,
       autoLim: 0.001,
-      autoConfirmUrl: AUTO_CONFIRM
+      autoConfirmUrl: false
     }, "*");
   };
 }
