@@ -430,6 +430,14 @@ function sendMessage() {
   $send.disabled = true;
   toast("Paying...", "ok");
   clearTimeout(paymentRevealTimer);
+  
+  // Show the iframe if payment takes longer than 5 seconds
+  paymentRevealTimer = setTimeout(function() {
+    if (pendingMsg) {
+      $payOv.classList.add("show");
+    }
+  }, 5000);
+
   var payUrl = BASE + "/pay";
   $payFr.src = buildScpPaySrc(SCPPAY, { autopay: 1, url: payUrl });
   $payFr.onload = function() {
