@@ -445,7 +445,7 @@ function sendMessage() {
       type: "x402:config",
       url: payUrl,
       autoLim: 0.001,
-      autoConfirmUrl: false
+      autoConfirmUrl: AUTO_CONFIRM
     }, "*");
   };
 }
@@ -473,9 +473,10 @@ window.addEventListener("message", function(e) {
     return;
   }
   if (e.data && e.data.type === "x402:payment:error") {
-    closePay();
-    pendingMsg = null;
-    $send.disabled = !$input.value.trim();
+    clearTimeout(paymentRevealTimer);
+    paymentRevealTimer = null;
+    $payOv.classList.add("show");
+    $send.disabled = false;
     toast("Payment failed: " + (e.data.message || "unknown error"), "err");
     return;
   }
